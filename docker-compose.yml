@@ -1,0 +1,42 @@
+# ION MIVE Lab — Docker Compose (skeleton, milestone M1).
+# Full-stack bring-up is completed at M10. Backend REST server is wired at M8;
+# the frontend service is added at M9. Qdrant is the only vector store (ADR-005).
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      - qdrant
+    environment:
+      DEBUG: "${DEBUG:-false}"
+      VECTOR_STORE_URL: "http://qdrant:6333"
+      VECTOR_COLLECTION: "${VECTOR_COLLECTION:-ion_corpus_v1}"
+      OPENAI_MODEL: "${OPENAI_MODEL:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-}"
+      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-local}"
+      # Secrets are provided at runtime via the environment / .env, never baked in.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+    # ports:            # enabled at M8 when the REST server exists
+    #   - "8000:8000"
+    # command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  # frontend:          # added at M9 (React + Vite SPA, its own container)
+  #   build:
+  #     context: ./frontend
+  #   depends_on:
+  #     - backend
+  #   ports:
+  #     - "5173:5173"
+
+volumes:
+  qdrant_storage:
