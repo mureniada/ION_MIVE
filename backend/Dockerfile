@@ -5,8 +5,10 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install dependencies first for layer caching.
+# Single explicit dependency contract: API server + the approved local embedding
+# runtime (sentence-transformers). No ad hoc installs inside running containers.
 COPY backend/pyproject.toml ./pyproject.toml
-RUN pip install --no-cache-dir ".[api]" || pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[api,local-embed]"
 
 # App code + canonical schemas (source of truth for validation).
 COPY backend/ ./

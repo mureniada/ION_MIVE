@@ -33,7 +33,10 @@ def build_embedder(settings: Settings) -> EmbeddingPort:
 
 def build_retrieval(settings: Settings, embedder: EmbeddingPort) -> QdrantRetrieval:
     return QdrantRetrieval(
-        embedder, url=settings.qdrant_url, collection=settings.qdrant_collection
+        embedder,
+        url=settings.qdrant_url,
+        collection=settings.qdrant_collection,
+        upsert_batch_size=settings.qdrant_upsert_batch_size,
     )
 
 

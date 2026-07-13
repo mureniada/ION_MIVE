@@ -1,7 +1,8 @@
 """Minimal stdlib test runner (no pytest required).
 
 Discovers `test_*` functions in `tests/test_*.py`, runs them, prints a summary.
-`pytest` also collects these same files. Run: `python run_tests.py`
+Supports `unittest.SkipTest` (counted as SKIP). `pytest` also collects these same
+files. Run: `python run_tests.py`
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import importlib
 import sys
 import traceback
+import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -18,7 +20,7 @@ sys.path.insert(0, str(HERE))
 def main() -> int:
     test_dir = HERE / "tests"
     modules = sorted(p.stem for p in test_dir.glob("test_*.py"))
-    passed = failed = 0
+    passed = failed = skipped = 0
     failures: list[str] = []
 
     for mod_name in modules:
@@ -31,18 +33,23 @@ def main() -> int:
                 continue
             try:
                 fn()
-                passed += 1
-                print(f"  PASS {mod_name}.{name}")
+            except unittest.SkipTest as exc:
+                skipped += 1
+                print(f"  SKIP {mod_name}.{name} ({exc})")
+                continue
             except Exception:
                 failed += 1
-                tb = traceback.format_exc()
-                failures.append(f"FAIL {mod_name}.{name}\n{tb}")
+                failures.append(f"FAIL {mod_name}.{name}\n{traceback.format_exc()}")
                 print(f"  FAIL {mod_name}.{name}")
+                continue
+            passed += 1
+            print(f"  PASS {mod_name}.{name}")
 
     print("\n" + "=" * 60)
     if failures:
         print("\n\n".join(failures))
-    print(f"TOTAL: {passed + failed}  PASSED: {passed}  FAILED: {failed}")
+    print(f"TOTAL: {passed + failed + skipped}  PASSED: {passed}  "
+          f"FAILED: {failed}  SKIPPED: {skipped}")
     return 1 if failed else 0
 
 

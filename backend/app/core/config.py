@@ -28,6 +28,7 @@ class Settings:
     embedding_model: str
     qdrant_url: str
     qdrant_collection: str
+    qdrant_upsert_batch_size: int   # points per Qdrant upsert request
     context_char_budget: int        # explicit truncation budget (docs/04)
 
     @staticmethod
@@ -42,6 +43,7 @@ class Settings:
             embedding_model=e.get("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
             qdrant_url=e.get("VECTOR_STORE_URL", "http://localhost:6333"),
             qdrant_collection=e.get("VECTOR_COLLECTION", "ion_corpus_v1"),
+            qdrant_upsert_batch_size=int(e.get("QDRANT_UPSERT_BATCH_SIZE", "128")),
             context_char_budget=int(e.get("CONTEXT_CHAR_BUDGET", "60000")),
         )
 

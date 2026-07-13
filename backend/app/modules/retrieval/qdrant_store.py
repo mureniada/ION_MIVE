@@ -1,17 +1,29 @@
 """Qdrant retrieval adapter (RetrievalPort) — the product vector store (ADR-005).
 
 Lazy-imports `qdrant_client` so importing this module needs no client/network.
-Deployment: Qdrant runs as its own Docker Compose service; this adapter connects
-over `VECTOR_STORE_URL`. Payload contract mirrors docs/CORPUS_REGISTER expectations:
-document_id, source_id, title, content, page, chunk_id, checksum, ingestion_version.
+Upserts are sent in deterministic, configurable batches to stay under Qdrant's
+request-size limit. Point IDs are stable (uuid5 of document_id) so re-ingestion
+is reproducible. Payload contract, collection name, dimension, chunking, and the
+retrieval contract are unchanged.
 """
 
 from __future__ import annotations
 
 import uuid
 
+from ...core.errors import RetrievalError
 from ...core.models import Evidence
 from ...core.ports import EmbeddingPort
+
+# Fixed namespace -> deterministic, stable point IDs across re-ingestion.
+_ID_NAMESPACE = uuid.UUID("6f9e3d2a-1c4b-4e8a-9f7d-2b5c8a1e0d33")
+
+DEFAULT_UPSERT_BATCH_SIZE = 128
+
+
+def point_id_for(document_id: str) -> str:
+    """Deterministic Qdrant point ID for a document/chunk id."""
+    return str(uuid.uuid5(_ID_NAMESPACE, str(document_id)))
 
 
 class QdrantRetrieval:
@@ -22,11 +34,15 @@ class QdrantRetrieval:
         url: str,
         collection: str,
         api_key: str | None = None,
+        upsert_batch_size: int = DEFAULT_UPSERT_BATCH_SIZE,
     ) -> None:
+        if upsert_batch_size < 1:
+            raise ValueError("upsert_batch_size must be >= 1")
         self._embedder = embedder
         self._url = url
         self._collection = collection
         self._api_key = api_key
+        self._batch_size = upsert_batch_size
         self._client = None
         self._models = None
 
@@ -54,17 +70,16 @@ class QdrantRetrieval:
                 ),
             )
 
-    def index(self, documents: list[dict]) -> int:
-        client = self._ensure_client()
+    # -- write -------------------------------------------------------- #
+    def _build_points(self, documents: list[dict]) -> list:
         m = self._models
-        self.ensure_collection()
         contents = [d["content"] for d in documents]
         vectors = self._embedder.embed(contents) if contents else []
         points = []
         for d, vec in zip(documents, vectors):
             points.append(
                 m.PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=point_id_for(d["document_id"]),
                     vector=vec,
                     payload={
                         "document_id": str(d["document_id"]),
@@ -78,19 +93,49 @@ class QdrantRetrieval:
                     },
                 )
             )
-        if points:
-            client.upsert(collection_name=self._collection, points=points)
-        return len(points)
+        return points
+
+    def _upsert_in_batches(self, client, points: list) -> int:
+        """Upsert points in deterministic batches. No batch is silently skipped."""
+        n = len(points)
+        if n == 0:
+            return 0
+        bs = self._batch_size
+        num_batches = (n + bs - 1) // bs
+        total = 0
+        for b in range(num_batches):
+            start = b * bs
+            end = min(start + bs, n)
+            batch = points[start:end]
+            try:
+                client.upsert(collection_name=self._collection, points=batch)
+            except Exception as exc:
+                raise RetrievalError(
+                    f"Qdrant upsert failed on batch {b + 1}/{num_batches} "
+                    f"(batch_size={self._batch_size}, actual={len(batch)}, "
+                    f"records {start}..{end - 1}, collection '{self._collection}'): {exc}",
+                    stage="retrieval",
+                ) from exc
+            total += len(batch)
+        return total
+
+    def index(self, documents: list[dict]) -> int:
+        client = self._ensure_client()
+        self.ensure_collection()
+        points = self._build_points(documents)
+        return self._upsert_in_batches(client, points)
 
     def rebuild(self, documents: list[dict]) -> int:
         """Deterministic rebuild: drop + recreate the collection, then index."""
         self.ensure_collection(recreate=True)
-        return self.index(documents)
+        self._ensure_client()
+        return self._upsert_in_batches(self._client, self._build_points(documents))
 
     def count(self) -> int:
         client = self._ensure_client()
         return int(client.count(collection_name=self._collection).count)
 
+    # -- read (unchanged contract) ------------------------------------ #
     def retrieve(self, question: str, top_k: int) -> list[Evidence]:
         client = self._ensure_client()
         qvec = self._embedder.embed([question])[0]

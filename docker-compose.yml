@@ -16,6 +16,11 @@ services:
       dockerfile: backend/Dockerfile
     depends_on:
       - qdrant
+    volumes:
+      # Corpus mounted read-only at the documented container path /app/corpus/source.
+      # So the normal ingestion command is just:
+      #   docker compose run --rm backend python -m app.ingest_cli --source corpus/source --recreate
+      - ./corpus/source:/app/corpus/source:ro
     environment:
       DEBUG: "${DEBUG:-false}"
       VECTOR_STORE_URL: "http://qdrant:6333"
