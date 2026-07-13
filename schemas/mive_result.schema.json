@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MIVEResult",
+  "type": "object",
+  "required": [
+    "question",
+    "engine_ids",
+    "agreements",
+    "partial_agreements",
+    "conflicts",
+    "unique_findings",
+    "unsupported_findings",
+    "shared_uncertainty",
+    "overall_status",
+    "comparison_notes"
+  ],
+  "properties": {
+    "question": {
+      "type": "string"
+    },
+    "engine_ids": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      }
+    },
+    "agreements": {
+      "type": "array"
+    },
+    "partial_agreements": {
+      "type": "array"
+    },
+    "conflicts": {
+      "type": "array"
+    },
+    "unique_findings": {
+      "type": "array"
+    },
+    "unsupported_findings": {
+      "type": "array"
+    },
+    "shared_uncertainty": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "overall_status": {
+      "type": "string"
+    },
+    "comparison_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

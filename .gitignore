@@ -1,0 +1,28 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Docker / local data
+*.local.yml
+.data/
+vector_store_data/
+qdrant_storage/
+
+# Corpus: private/copyrighted raw material — NOT committed. Traceability lives in docs/CORPUS_REGISTER.md
+corpus/source/
+# Generated vector index / runtime cache
+*.index
+.cache/
