@@ -45,7 +45,6 @@ IVE_RESPONSE_SCHEMA: dict = {
         "claims",
         "concepts",
         "relations",
-        "evidence_mapping",
         "uncertainty",
         "confidence",
     ],
@@ -91,10 +90,6 @@ IVE_RESPONSE_SCHEMA: dict = {
                     "evidence_document_ids": {"type": "array", "items": {"type": "string"}},
                 },
             },
-        },
-        "evidence_mapping": {
-            "type": "object",
-            "additionalProperties": {"type": "array", "items": {"type": "string"}},
         },
         "uncertainty": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "number"},
@@ -212,9 +207,13 @@ def normalize(
         if isinstance(x, dict) and {"source", "relation", "target"} <= set(x)
     ]
 
-    evidence_mapping = {}
-    for k, v in (raw.get("evidence_mapping", {}) or {}).items():
-        evidence_mapping[str(k)] = [str(x) for x in (v or [])]
+    raw_map = raw.get("evidence_mapping")
+    if isinstance(raw_map, dict) and raw_map:
+        evidence_mapping = {str(k): [str(x) for x in (v or [])] for k, v in raw_map.items()}
+    else:
+        # Not requested from providers (OpenAI strict mode forbids dynamic-key objects);
+        # derive faithfully from each claim's cited evidence — a restatement, not fabrication.
+        evidence_mapping = {c.claim_id: list(c.evidence_document_ids) for c in claims}
 
     uncertainty = list(raw.get("uncertainty", []) or [])
     _require(all(isinstance(u, str) for u in uncertainty), "uncertainty must be strings.")
