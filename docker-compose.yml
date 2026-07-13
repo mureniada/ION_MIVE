@@ -1,6 +1,6 @@
-# ION MIVE Lab — Docker Compose (skeleton, milestone M1).
-# Full-stack bring-up is completed at M10. Backend REST server is wired at M8;
-# the frontend service is added at M9. Qdrant is the only vector store (ADR-005).
+# ION MIVE Lab — Docker Compose.
+# Backend now serves the FastAPI transport (M8). Frontend service is added at M9.
+# Qdrant is the only vector store (ADR-005).
 
 services:
   qdrant:
@@ -18,7 +18,7 @@ services:
       - qdrant
     volumes:
       # Corpus mounted read-only at the documented container path /app/corpus/source.
-      # So the normal ingestion command is just:
+      # Ingestion (overrides the default command):
       #   docker compose run --rm backend python -m app.ingest_cli --source corpus/source --recreate
       - ./corpus/source:/app/corpus/source:ro
     environment:
@@ -31,9 +31,9 @@ services:
       # Secrets are provided at runtime via the environment / .env, never baked in.
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
-    # ports:            # enabled at M8 when the REST server exists
-    #   - "8000:8000"
-    # command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   # frontend:          # added at M9 (React + Vite SPA, its own container)
   #   build:

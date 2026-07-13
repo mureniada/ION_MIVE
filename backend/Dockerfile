@@ -1,4 +1,4 @@
-# Backend image: core + modules behind the (later) FastAPI service.
+# Backend image: intelligence core + modules + FastAPI transport (M8).
 # Build context is the REPO ROOT so schemas/ can be copied in.
 FROM python:3.12-slim
 
@@ -18,6 +18,6 @@ ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
-# NOTE: the REST/SSE server (uvicorn app.main:app) is wired at milestone M8.
-# Until then the image ships the tested core + CLI.
-CMD ["python", "-m", "app.cli", "--help"]
+# Default: serve the transport layer. `docker compose run` overrides this command
+# (e.g. `python run_tests.py`, `python -m app.cli "..."`, `python -m app.ingest_cli`).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
