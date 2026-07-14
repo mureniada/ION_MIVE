@@ -1,6 +1,7 @@
 # ION MIVE Lab — Docker Compose.
-# Backend now serves the FastAPI transport (M8). Frontend service is added at M9.
-# Qdrant is the only vector store (ADR-005).
+# Backend serves the FastAPI transport (M8). Frontend service is added at M9.
+# Qdrant is the only vector store (ADR-005). Persistent HF/sentence-transformers
+# cache (M8.1) avoids re-downloading the embedding model on each container run.
 
 services:
   qdrant:
@@ -21,6 +22,8 @@ services:
       # Ingestion (overrides the default command):
       #   docker compose run --rm backend python -m app.ingest_cli --source corpus/source --recreate
       - ./corpus/source:/app/corpus/source:ro
+      # Persistent embedding-model cache (M8.1): reused across container runs.
+      - hf_cache:/root/.cache/huggingface
     environment:
       DEBUG: "${DEBUG:-false}"
       VECTOR_STORE_URL: "http://qdrant:6333"
@@ -28,6 +31,10 @@ services:
       OPENAI_MODEL: "${OPENAI_MODEL:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-}"
       EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-local}"
+      # Persistent embedding cache locations (M8.1).
+      HF_HOME: "/root/.cache/huggingface"
+      TRANSFORMERS_CACHE: "/root/.cache/huggingface/transformers"
+      SENTENCE_TRANSFORMERS_HOME: "/root/.cache/huggingface/sentence-transformers"
       # Secrets are provided at runtime via the environment / .env, never baked in.
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
@@ -45,3 +52,4 @@ services:
 
 volumes:
   qdrant_storage:
+  hf_cache:

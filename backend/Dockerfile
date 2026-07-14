@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir ".[api,local-embed]"
 # App code + canonical schemas (source of truth for validation).
 COPY backend/ ./
 COPY schemas/ /schemas/
+# docker-compose.yml is copied in so the compose-contract tests can read it
+# inside the container (M8.1). It is config only, not application code.
+COPY docker-compose.yml ./docker-compose.yml
 ENV ION_SCHEMAS_DIR=/schemas
 ENV PYTHONDONTWRITEBYTECODE=1
 
