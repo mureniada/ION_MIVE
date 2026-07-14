@@ -1,7 +1,7 @@
 # ION MIVE Lab — Docker Compose.
-# Backend serves the FastAPI transport (M8). Frontend service is added at M9.
-# Qdrant is the only vector store (ADR-005). Persistent HF/sentence-transformers
-# cache (M8.1) avoids re-downloading the embedding model on each container run.
+# backend: FastAPI transport (M8). ui: Streamlit thin client (M9). qdrant: vector store.
+# Persistent HF/sentence-transformers cache (M8.1) avoids re-downloading the model.
+# Qdrant is the only vector store (ADR-005).
 
 services:
   qdrant:
@@ -42,13 +42,16 @@ services:
       - "8000:8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-  # frontend:          # added at M9 (React + Vite SPA, its own container)
-  #   build:
-  #     context: ./frontend
-  #   depends_on:
-  #     - backend
-  #   ports:
-  #     - "5173:5173"
+  ui:
+    build:
+      context: ./ui
+    depends_on:
+      - backend
+    environment:
+      # Streamlit reaches the backend over the internal compose network only.
+      BACKEND_URL: "http://backend:8000"
+    ports:
+      - "8501:8501"
 
 volumes:
   qdrant_storage:

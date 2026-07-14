@@ -108,3 +108,44 @@ def sse_events(core, question, top_k=None):
 def format_sse(event: str, data: dict) -> str:
     """Format one Server-Sent Event frame."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def parse_sse_stream(lines):
+    """Inverse of `format_sse`: parse SSE lines into (event, data) tuples.
+
+    Canonical parser used by the round-trip test; the Streamlit client mirrors it.
+    `data` is JSON-decoded (None if empty/undecodable).
+    """
+    event = None
+    data_lines: list[str] = []
+
+    def flush():
+        nonlocal event, data_lines
+        if event is None and not data_lines:
+            return None
+        raw = "\n".join(data_lines)
+        try:
+            payload = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            payload = None
+        out = (event or "message", payload)
+        event, data_lines = None, []
+        return out
+
+    for raw in lines:
+        line = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+        line = (line or "").rstrip("\r\n")
+        if line == "":
+            frame = flush()
+            if frame is not None:
+                yield frame
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event = line[len("event:"):].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[len("data:"):].lstrip())
+    frame = flush()
+    if frame is not None:
+        yield frame
