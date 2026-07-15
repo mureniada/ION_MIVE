@@ -35,6 +35,7 @@ def build_retrieval(settings: Settings, embedder: EmbeddingPort) -> QdrantRetrie
     return QdrantRetrieval(
         embedder,
         url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
         collection=settings.qdrant_collection,
         upsert_batch_size=settings.qdrant_upsert_batch_size,
     )
