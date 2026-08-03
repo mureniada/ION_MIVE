@@ -75,12 +75,15 @@ retrieval contract — remain frozen.
 
 ---
 
-## 4. Open issue R-001 — Retrieval Baseline Provenance
+## 4. R-001 — Retrieval Baseline Provenance — CLOSED WITH ACCEPTED PROVENANCE EXCEPTION
 
-**Status:** OPEN — CAUSE NOT ESTABLISHED — NO CODE CHANGE AUTHORISED.
+**Status:** CLOSED WITH ACCEPTED PROVENANCE EXCEPTION.
 
-Carried forward as the accepted exception to the M8.1 closure recorded in
-section 3. Tracked independently of M8.1 and of E1.
+**Closed by explicit operator decision on 2026-08-03 (Phase E), following the
+read-only Phase D audit.** This is a documentation-only closure. It does not
+establish a technical cause and does not authorise, propose, or make any
+retrieval-code correction, re-ingestion, or configuration change. Tracked
+independently of M8.1 and of E1.
 
 **Historical expected top-1** (recorded in the 2026-07-14 snapshot):
 `sacred_economics_book_text::p12::c1`
@@ -119,21 +122,54 @@ Constraints on what can be concluded:
 - **Within the file types searched during the 2026-08-03 diagnosis,
   `p12::c1` was found only in the 2026-07-14 handover snapshot.**
 
-**The cause of the discrepancy remains unresolved.** This index makes no
-claim that a transcription error occurred, that a model revision changed,
-that the retrieved sets are equal, or that nondeterminism has been
-completely excluded. Each of those remains undetermined on the available
-evidence.
+**Closure basis — an accepted provenance exception, not a proven cause.**
+The factual causal mechanism behind the discrepancy remains **NOT
+ESTABLISHED**. This index makes no claim that a transcription error
+occurred, that a model revision changed, that the retrieved sets are
+equal, or that nondeterminism has been completely excluded. Each of those
+remains undetermined on the available evidence.
+
+The historical runtime state cannot be deterministically reconstructed
+from the preserved provenance, because the required embedding-model,
+library, and runtime provenance for the 2026-07-14 observation was not
+sufficiently pinned or preserved. **This does not mean historical
+`p12::c1` is impossible to reproduce in principle.** It means the
+historical baseline is **not deterministically reproducible from the
+evidence currently preserved in this repository.**
+
+Existing evidence does not justify or authorise a retrieval-code
+correction. Closure is based on an operator-accepted provenance exception,
+not on a proven technical cause or a code fix. No retrieval code was
+repaired or changed as part of this closure.
 
 ---
 
-## 5. Open issue E1 — frontend thin-client compliance
+## 5. E1 — Thin-client compliance — CLOSED / PASS (5/5)
 
-A Streamlit client exists under `ui/` and was committed as `11b7056`
-(2026-07-14). **Whether it satisfies the thin-client constraints — no
-intelligence, retrieval, or comparison logic; backend reached only through
-the REST and SSE API — has not been verified.** E1 remains open and is
-tracked independently of M8.1.
+**Status:** CLOSED / PASS (5/5).
+
+**Closed by explicit operator decision on 2026-08-03 (Phase E), following the
+read-only Phase D audit.** A Streamlit client exists under `ui/` and was
+committed as `11b7056` (2026-07-14). The Phase D audit established, against
+the thin-client acceptance criteria:
+
+1. No ION reasoning exists in the frontend — **PASS**.
+2. No retrieval logic exists in the frontend — **PASS**.
+3. No MIVE comparison or orchestration exists in the frontend — **PASS**.
+4. Backend functionality is reached only through REST/SSE interfaces — **PASS**.
+5. The frontend has a separate containerized boundary — **PASS**.
+
+**Architectural thin-client compliance: PASS (5/5).**
+
+**Specification-alignment gap (separate, non-blocking).** The historical
+expectation of a React/Vite `frontend/` differs from the implemented
+Streamlit `ui/` structure. This is a documentation-currency /
+specification-alignment gap, **not** an E1 architectural compliance
+failure, and it does not block this closure. Any update to ADR-009,
+`docs/16_TARGET_FILE_TREE.md`, or related target documentation remains a
+separate future task and was not made as part of this closure.
+
+Tracked independently of M8.1 and of R-001.
 
 ---
 
@@ -141,8 +177,13 @@ tracked independently of M8.1.
 
 - It does not assert that M8.1 passed without exception. M8.1 is closed
   with an accepted exception (section 3).
-- It does not close R-001, resolve the retrieval top-1 discrepancy, or
-  attribute a cause.
-- It does not verify E1.
+- Closing R-001 (section 4) does not resolve the retrieval top-1
+  discrepancy or attribute a cause. The cause remains **NOT ESTABLISHED**;
+  closure rests on an accepted provenance exception, not a proven
+  technical explanation.
+- Closing E1 (section 5) certifies architectural thin-client compliance
+  only. It does not certify frontend/directory specification alignment
+  with the historical React/Vite expectation, which remains a separate,
+  non-blocking documentation gap.
 - It does not modify, correct, or reinterpret either handover document.
 - It does not authorise any code change, re-ingestion, or scope expansion.
