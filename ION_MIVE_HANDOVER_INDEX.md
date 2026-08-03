@@ -46,22 +46,41 @@ byte-for-byte.
 
 ---
 
-## 3. M8.1 status — ACCEPTANCE OPEN
+## 3. M8.1 — CLOSED WITH ACCEPTED EXCEPTION
 
-- **Passed:** the compose and Dockerfile contract checks (covered by the
-  test suite) and the cache-reuse check (no Hugging Face downloads on three
-  fresh-container runs).
-- **Not met:** the historical exact-top-1 condition recorded in the
-  2026-07-14 snapshot.
-- **M8.1 acceptance therefore remains open.**
-- **Closure requires an explicit owner decision.** It must not be closed by
-  an automatic code change, and no code change is proposed. The frozen
-  components — corpus, ingested vectors, embedding model and dimension,
-  Qdrant collection, and the retrieval contract — remain frozen.
+**Closed by explicit operator decision on 2026-08-03.** M8.1 is closed as a
+milestone. It is **not** closed as an unqualified PASS: one condition was
+not met and is carried forward as an accepted exception.
+
+**Passed — persistent embedding-cache scope.** Evidence relied on:
+implementation committed as `38b1f62`; persistent `hf_cache` reuse passed on
+three fresh-container runs; no Hugging Face downloads occurred during those
+runs; Docker test suite TOTAL 66 / PASSED 66 / FAILED 0 / SKIPPED 0. The
+compose and Dockerfile contract checks covered by the test suite also passed.
+
+**Not met — historical exact-top-1 condition** recorded in the 2026-07-14
+snapshot.
+
+**Accepted exception.** By explicit operator decision, that unresolved
+condition is reclassified and transferred out of M8.1 acceptance to open
+issue **R-001 — Retrieval Baseline Provenance**, which remains:
+
+OPEN — CAUSE NOT ESTABLISHED — NO CODE CHANGE AUTHORISED.
+
+**This closure does not imply that the retrieval discrepancy passed or was
+resolved.** It is neither. This is a documentation-only decision. No code
+change was made, proposed, or authorised. The frozen components — corpus,
+ingested vectors, embedding model and dimension, Qdrant collection, and the
+retrieval contract — remain frozen.
 
 ---
 
-## 4. Retrieval top-1 discrepancy — UNRESOLVED
+## 4. Open issue R-001 — Retrieval Baseline Provenance
+
+**Status:** OPEN — CAUSE NOT ESTABLISHED — NO CODE CHANGE AUTHORISED.
+
+Carried forward as the accepted exception to the M8.1 closure recorded in
+section 3. Tracked independently of M8.1 and of E1.
 
 **Historical expected top-1** (recorded in the 2026-07-14 snapshot):
 `sacred_economics_book_text::p12::c1`
@@ -120,8 +139,10 @@ tracked independently of M8.1.
 
 ## 6. What this index does not assert
 
-- It does not close M8.1.
-- It does not resolve the retrieval top-1 discrepancy or attribute a cause.
+- It does not assert that M8.1 passed without exception. M8.1 is closed
+  with an accepted exception (section 3).
+- It does not close R-001, resolve the retrieval top-1 discrepancy, or
+  attribute a cause.
 - It does not verify E1.
 - It does not modify, correct, or reinterpret either handover document.
 - It does not authorise any code change, re-ingestion, or scope expansion.
