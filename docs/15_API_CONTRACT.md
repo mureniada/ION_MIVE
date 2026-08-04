@@ -7,42 +7,83 @@ Paths, field names, and status codes below are the intended contract; the implem
 ## Base
 
 - JSON request and response bodies (`Content-Type: application/json`).
-- Versioned base path recommended: `/api/v1`.
+- **No versioned base path is currently implemented.** Endpoints are unprefixed
+  (see below) — verified directly against `backend/app/main.py`. A versioned
+  prefix such as `/api/v1` remains a possible future proposal, not built.
 - CORS restricted to the frontend origin(s) from `CORS_ALLOWED_ORIGINS`.
 - Secrets are never returned in any payload or error.
 
 ## Endpoints
 
-### `GET /api/v1/health`
-Liveness/readiness. Returns service status and whether required configuration is present (booleans only — never secret values, per `docs/11`).
+### `GET /health`
+Liveness. Returns exactly `{"status": "ok"}` (verified directly against
+`backend/app/main.py`). This endpoint currently returns no configuration or
+`debug` fields; documenting those would describe unimplemented behavior.
 
-```json
-{ "status": "ok", "config_present": true, "debug": false }
-```
-
-### `POST /api/v1/ask`
-The primary endpoint. Runs the full pipeline and returns one final result.
+### `POST /ask`
+The primary endpoint. Runs the full pipeline and returns the rendered result
+directly — verified by `backend/tests/test_transport_api.py::test_post_ask_returns_complete_rendered_result_for_real_question`
+(Phase P2, `1 passed`, exit code `0`), which asserts the HTTP response body is
+byte-for-byte the renderer's output with no wrapping.
 
 Request:
 ```json
-{ "question": "string (required, non-empty)", "top_k": 5 }
+{ "question": "What is money?", "top_k": 5 }
 ```
+(`question`: required, non-empty string. `top_k`: optional integer.)
 
-Response (200): the rendered result plus the structured payload behind it. It carries the User Output Contract (`docs/07`) content and the underlying MIVE result, IVE reports, evidence, and metrics (`docs/08`). Raw JSON stays available but is not the default view in the frontend.
+Response (200): **the rendered result directly** — this is the current,
+verified public contract. It is a flat object with exactly these top-level
+keys (per `backend/app/modules/renderer/renderer.py`):
 
 ```json
 {
-  "request_id": "string",
-  "question": "string",
-  "rendered": { "...": "human-readable sections per docs/07" },
-  "mive_result": { "...": "per schemas/mive_result.schema.json" },
-  "ive_reports": [ { "...": "per schemas/ive_report.schema.json" } ],
-  "metrics": { "...": "per docs/08 telemetry fields" },
-  "status": "success"
+  "question": "What is money?",
+  "primary_answer": "string",
+  "mive_assessment": {
+    "agreements": [ { "...": "per-pair comparison entries" } ],
+    "partial_agreements": [ { "...": "..." } ],
+    "disagreements": [ { "...": "..." } ],
+    "unique_findings": [ { "...": "..." } ],
+    "weakly_supported": [ { "...": "..." } ],
+    "overall_status": "strong_agreement | partial_agreement | conflict | divergent"
+  },
+  "uncertainty": {
+    "shared": [ "string" ],
+    "per_engine": { "engine_id": [ "string" ] },
+    "weakly_supported_claims": [ { "...": "..." } ]
+  },
+  "evidence": [
+    { "document_id": "string", "title": "string", "source": "string",
+      "page": "string|number|null", "chunk_id": "string|null",
+      "excerpt": "string", "claim_linkage": "string" }
+  ],
+  "operational_metrics": {
+    "request_id": "string", "timestamp": "ISO-8601 string",
+    "question": "string", "retrieved_chunks": 0, "context_characters": 0,
+    "context_documents": 0, "retrieval_latency_ms": 0.0,
+    "comparison_latency_ms": 0.0, "total_latency_ms": 0.0,
+    "providers": [
+      { "provider": "string", "model": "string", "input_tokens": 0,
+        "output_tokens": 0, "latency_ms": 0.0, "estimated_cost": 0.0,
+        "usage_is_estimated": false }
+    ],
+    "total_estimated_cost": 0.0, "status": "success", "error_stage": null
+  },
+  "disclaimer": "string"
 }
 ```
 
-### `GET /api/v1/ask/stream` — DEBUG ONLY
+**Distinct from the internal Core result.** Internally, `core.ask()` returns a
+fuller `AskResult` (`request_id`, `question`, `status`, `rendered`,
+`mive_result`, `ive_reports`, `metrics`, per `backend/app/core/models.py`).
+`POST /ask` returns only that result's `rendered` field — the internal
+`mive_result`, `ive_reports`, and top-level `metrics`/`status` are **not**
+exposed at the HTTP layer today. An envelope exposing those fields (as an
+earlier draft of this document showed) is a **proposed future shape, not the
+implemented current contract** — it must not be treated as already built.
+
+### `GET /ask/stream` — DEBUG ONLY
 Exposed **only when `DEBUG=true`**. When `DEBUG=false` this route must not exist (return 404). Server-Sent Events; one event per completed stage, ending with the final result.
 
 Event sequence (example):
@@ -61,17 +102,37 @@ The generator must check for client disconnect and stop cleanly. The `result` ev
 
 Failures are precise and stage-specific (`docs/07` failure output). Never a generic success when a required provider failed.
 
+The implemented error response shape is exactly this (verified against
+`backend/app/api/service.py`'s `validate_request`, `not_ready_payload`, and
+`core_error_payload`):
+
 ```json
 {
-  "request_id": "string",
   "status": "error",
-  "error_stage": "retrieval | context_pack | gemini | openai | normalization | mive | configuration",
-  "message": "human-readable, secret-free",
-  "partial_metrics": { "...": "whatever telemetry was captured before failure" }
+  "error_stage": "invalid_request | not_ready | retrieval | context_pack | gemini | openai | normalization | mive | configuration",
+  "message": "human-readable, secret-free"
 }
 ```
 
-Suggested status codes: `400` invalid request (e.g. empty question, bad `top_k`); `422` normalization/validation failure; `424` a required provider/dependency failed; `500` unexpected; `503` missing/invalid configuration before external calls.
+There is no `request_id` or `partial_metrics` field in the current
+implementation — an earlier draft of this document showed both, but neither
+is returned today.
+
+Exact implemented `error_stage` → HTTP status mapping (verified against
+`backend/app/api/service.py`'s `_STAGE_STATUS`, `not_ready_payload`, and
+`validate_request`; no `424` mapping exists anywhere in the implementation):
+
+| `error_stage` | HTTP status | Notes |
+|---|---|---|
+| `invalid_request` | 400 | transport-level validation (empty question, bad `top_k`) — before any core call |
+| `not_ready` | 503 | missing/invalid configuration, checked before any external call |
+| `retrieval` | 502 | |
+| `gemini` | 502 | |
+| `openai` | 502 | |
+| `context_pack` | 500 | |
+| `mive` | 500 | |
+| `configuration` | 500 | only reachable if a `ConfigurationError` originates inside `core.ask()` itself, rather than at the earlier `require_ready()` check (which maps to `not_ready` instead) |
+| `normalization` | 422 | |
 
 A single-provider failure is an **incomplete MIVE state**, surfaced as an error with `error_stage`, not a 200 success (invariant, `docs/06`).
 

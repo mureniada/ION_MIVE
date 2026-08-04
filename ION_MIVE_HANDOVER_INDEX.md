@@ -185,5 +185,68 @@ Tracked independently of M8.1 and of R-001.
   only. It does not certify frontend/directory specification alignment
   with the historical React/Vite expectation, which remains a separate,
   non-blocking documentation gap.
+- Reaching 47/47 technical acceptance (section 7) does not itself
+  constitute a commit, push, tag, release, or deployment. Those remain
+  separate, explicitly authorised operator decisions, not yet taken.
 - It does not modify, correct, or reinterpret either handover document.
 - It does not authorise any code change, re-ingestion, or scope expansion.
+
+---
+
+## 7. Technical acceptance — 47/47 VERIFIED (2026-08-04)
+
+**Status:** all 47 mandatory criteria in `docs/10_ACCEPTANCE_CRITERIA.md` are
+now evidence-backed as PASS. This is a **technical verification record
+only** — it does not itself constitute a commit, push, tag, release, or
+deployment decision. Those remain separate, explicitly authorised operator
+actions, not yet taken.
+
+- **R-001 — Retrieval Baseline Provenance:** CLOSED WITH ACCEPTED PROVENANCE
+  EXCEPTION (section 4). Cause remains NOT ESTABLISHED; historical baseline
+  not deterministically reproducible from preserved evidence.
+- **E1 — Thin-client compliance:** CLOSED / PASS (5/5) (section 5).
+  Architectural compliance proven; frontend/directory specification
+  alignment with the historical React/Vite expectation remains a separate,
+  non-blocking documentation gap.
+- **A1 — Clean-environment corpus ingestion:** PASS — PROVEN. Isolated,
+  ephemeral ingestion (no persistent Qdrant volume attached, `hf_cache`
+  mounted read-only, no external network reachable) completed with exit
+  code `0`: `files processed: 9  files failed: 0`; `chunks created: 6063`;
+  `unique chunk_ids: 6063`; `qdrant vectors: 6063` — all three counts equal.
+  All 9 distinct source files independently confirmed present via a full
+  payload scroll of the temporary collection (`next_page_offset: null`).
+- **I2 — Real HTTP transport for `POST /ask`:** PASS — PROVEN. Targeted test
+  `backend/tests/test_transport_api.py::test_post_ask_returns_complete_rendered_result_for_real_question`:
+  `1 passed`, exit code `0`. Full backend suite: `65 passed, 7 skipped`,
+  exit code `0` — all 7 skips identified as `test_embedding_cache.py`'s
+  `docker-compose.yml`-presence checks, an artifact of mounting the current
+  workspace `backend/` directory over the container's `/app` (shadowing the
+  image's baked-in copy of that file); unrelated to I2, and the I2 test
+  itself is not among the skipped tests. Test execution occurred only after
+  the container's Docker network attachments were removed (confirmed empty
+  network map before either pytest command ran).
+- **I3 — DEBUG-gated SSE:** PASS — PROVEN. Isolated container run (existing
+  backend image, no rebuild): `TOTAL 71 / PASSED 71 / FAILED 0 / SKIPPED 0`,
+  including the three tests proving the 404 gate fires when `DEBUG` is
+  false/unset, fires before readiness/core initialisation, and that the
+  route remains available when `DEBUG=true`.
+- **I6 — Three-service Compose startup:** PASS — PROVEN. `docker compose up
+  -d` (existing images, no build) started `qdrant`, `backend`, and `ui`
+  together; each independently health-checked over HTTP 200; the running
+  `ui` container's filesystem confirmed to contain no backend application
+  code; the persistent `qdrant_storage` volume's identity confirmed
+  unchanged before and after; shut down via `docker compose stop` (not
+  `down -v`).
+
+**Documentation reconciled alongside this record:** `docs/15_API_CONTRACT.md`
+corrected to match the implemented `POST /ask` contract exactly (no
+`/api/v1` prefix; a flat rendered-result response, not an envelope). The
+broader envelope shape is retained there only as an explicitly labelled
+future proposal, not the current contract.
+
+**Not yet done, and not claimed here:** no commit, push, tag, release, or
+deployment has occurred as part of reaching 47/47. The validated
+implementation exists only as uncommitted working-tree changes at HEAD
+`29c7d9e2b7dac3faff31194e9087e317b8c80c11`, across exactly four paths:
+`backend/app/main.py`, `backend/tests/test_transport_api.py`,
+`ui/client.py`, `ui/tests/test_client.py`.

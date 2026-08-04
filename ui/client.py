@@ -78,11 +78,23 @@ def parse_sse_stream(lines: Iterable) -> Iterator[Tuple[str, Optional[dict]]]:
 
 def stream_ask(question: str, top_k: Optional[int] = None,
                base: Optional[str] = None) -> Iterator[Tuple[str, Optional[dict]]]:
-    """GET /ask/stream — yields (event, data) as the pipeline progresses."""
+    """GET /ask/stream — yields (event, data) as the pipeline progresses.
+
+    Falls back to exactly one POST /ask when streaming is unavailable
+    (HTTP 404 — e.g. the backend has DEBUG=false).
+    """
     base = base or backend_url()
     params: dict = {"question": question}
     if top_k:
         params["top_k"] = top_k
     with requests.get(f"{base}/ask/stream", params=params, stream=True, timeout=300) as resp:
+        if resp.status_code == 404:
+            payload: dict = {"question": question}
+            if top_k:
+                payload["top_k"] = top_k
+            fallback = requests.post(f"{base}/ask", json=payload, timeout=300)
+            fallback.raise_for_status()
+            yield ("result", fallback.json())
+            return
         resp.raise_for_status()
         yield from parse_sse_stream(resp.iter_lines(decode_unicode=True))

@@ -66,6 +66,11 @@ async def ask(payload: dict | None = None):
 
 @app.get("/ask/stream")
 def ask_stream(question: str, top_k: int | None = None):
+    # Gate first, on a fresh config read only — before validation, readiness,
+    # core construction, or any provider work (docs/15, ADR-003).
+    if not Settings.load().debug:
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
     invalid = service.validate_request(question, top_k)
     if invalid:
         return JSONResponse(status_code=invalid[0], content=invalid[1])
