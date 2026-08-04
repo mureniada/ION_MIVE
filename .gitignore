@@ -26,3 +26,7 @@ corpus/source/
 # Generated vector index / runtime cache
 *.index
 .cache/
+
+# Claude Code: local-only permission overrides. .claude/settings.json IS tracked
+# (it is the project guardrail); only the local override file is ignored.
+.claude/settings.local.json

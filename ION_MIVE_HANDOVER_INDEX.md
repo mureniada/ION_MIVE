@@ -62,10 +62,17 @@ compose and Dockerfile contract checks covered by the test suite also passed.
 snapshot.
 
 **Accepted exception.** By explicit operator decision, that unresolved
-condition is reclassified and transferred out of M8.1 acceptance to open
-issue **R-001 — Retrieval Baseline Provenance**, which remains:
+condition is reclassified and transferred out of M8.1 acceptance to issue
+**R-001 — Retrieval Baseline Provenance**. R-001 was open at the moment of
+this M8.1 closure; it has since been closed separately, and its current
+status is:
 
-OPEN — CAUSE NOT ESTABLISHED — NO CODE CHANGE AUTHORISED.
+CLOSED WITH ACCEPTED PROVENANCE EXCEPTION — CAUSE NOT ESTABLISHED — NO CODE
+CHANGE AUTHORISED.
+
+See section 4 for that closure and for the limits on what it establishes.
+Closing R-001 did not resolve the retrieval discrepancy and did not prove a
+cause.
 
 **This closure does not imply that the retrieval discrepancy passed or was
 resolved.** It is neither. This is a documentation-only decision. No code
@@ -244,9 +251,20 @@ corrected to match the implemented `POST /ask` contract exactly (no
 broader envelope shape is retained there only as an explicitly labelled
 future proposal, not the current contract.
 
-**Not yet done, and not claimed here:** no commit, push, tag, release, or
-deployment has occurred as part of reaching 47/47. The validated
-implementation exists only as uncommitted working-tree changes at HEAD
-`29c7d9e2b7dac3faff31194e9087e317b8c80c11`, across exactly four paths:
-`backend/app/main.py`, `backend/tests/test_transport_api.py`,
-`ui/client.py`, `ui/tests/test_client.py`.
+**Commit state — updated 2026-08-04 (AB-01/AB-02).** The four validated
+transport/UI paths — `backend/app/main.py`,
+`backend/tests/test_transport_api.py`, `ui/client.py`,
+`ui/tests/test_client.py` — are **no longer uncommitted**. They were
+committed at `300890e8e01ebf5b04ed4d5fb087732f28bb6d86`
+(*fix: align transport API contract and documentation*, 2026-08-04),
+together with `docs/15_API_CONTRACT.md` and this index. The earlier
+statement that they existed only as uncommitted working-tree changes at
+HEAD `29c7d9e2b7dac3faff31194e9087e317b8c80c11` described the state before
+that commit and is superseded. The read-only AB-01 phase began from HEAD
+`300890e…` with a clean worktree.
+
+**Still not done, and not claimed here:** no push, tag, release, or
+deployment has occurred as part of reaching 47/47. Those remain separate,
+explicitly authorised operator decisions. No remote fetch was performed
+during AB-01 or AB-02, so local agreement with `origin/main` reflects only
+the local remote-tracking ref and **does not establish remote-live truth.**

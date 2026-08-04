@@ -22,6 +22,14 @@ The same constraints apply every time this is asked for, stated directly rather 
 
 `.claude/settings.json` continues to enforce, at the project-permission level, independent of any skill: Manual (`default`) mode, with Auto mode and `bypassPermissions` mode explicitly disabled (`disableAutoMode` / `disableBypassPermissionsMode`); `ask` rules on Git mutation, Docker, tests, builds/installs, and network calls; `deny` rules on destructive Git/Docker operations and secret-file access. These apply to every command in every session and never depended on a skill being loaded.
 
+## Configuration and permission boundaries
+
+- **`.claude/settings.json` is the tracked project guardrail.** It is committed to the repository (added by `356bc05`) and is the authoritative permission model for every session. It is not a local file and is not gitignored.
+- **`.claude/settings.local.json` is local-only.** It must remain ignored and must never be committed. It must not contain secrets, and it must not weaken any project protection — it may only narrow scope or add trivially safe read-only allowances. Project `deny` rules always take precedence and cannot be overridden locally.
+- **Secret files are denied outright**, at both repository root and nested paths: `.env`, `.env.*`, `**/secrets/**`, `**/*.key`, `**/*.pem`. Reading a secret value is never an authorized step in any phase.
+- **Railway and deployment actions require explicit operator approval.** `railway` is covered by `ask` in both the Bash and PowerShell rule families. Deploys, redeploys, variable changes, and domain changes are operator decisions, never autonomous ones.
+- **The canonical bootstrap is exactly three tracked paths:** `CLAUDE.md`, `.claude/settings.json`, and this document. Documents named `01_ION_MIVE_CONFIRMED_STATE_EN.md`, `03_CLAUDE_CODE_AUTOMATION_BOOTSTRAP_EN.md`, and `04_OPERATOR_WORKING_PROTOCOL_RU.md` have never existed in this repository. They were erroneous mission assumptions, are **not** part of the canonical workflow, and must not be created, stubbed, or referenced as required reading.
+
 ## Planned — not implemented
 
 Four further capabilities remain planned only, described here as future ideas rather than committed slash commands — so that if one is ever built, it isn't forced into the same restart-dependent shape, and can use whatever mechanism actually works reliably at that time. Each still requires its own future proposal, review, and explicit operator approval before any code is written:
