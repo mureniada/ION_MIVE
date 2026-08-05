@@ -88,11 +88,11 @@ Exposed **only when `DEBUG=true`**. When `DEBUG=false` this route must not exist
 
 Event sequence (example):
 ```
-event: stage   data: {"stage":"retrieval","status":"done","latency_ms":120}
-event: stage   data: {"stage":"context_pack","status":"done"}
-event: stage   data: {"stage":"gemini_ive","status":"done","latency_ms":2100}
-event: stage   data: {"stage":"openai_ive","status":"done","latency_ms":1980}
-event: stage   data: {"stage":"mive","status":"done"}
+event: progress data: {"stage":"retrieval","status":"done","latency_ms":120}
+event: progress data: {"stage":"context_pack","status":"done"}
+event: progress data: {"stage":"gemini_ive","status":"done","latency_ms":2100}
+event: progress data: {"stage":"openai_ive","status":"done","latency_ms":1980}
+event: progress data: {"stage":"mive","status":"done"}
 event: result  data: { ...same payload as POST /ask... }
 ```
 
