@@ -1,0 +1,15 @@
+{
+  "registry_version": "1",
+  "materials": [
+    {
+      "id": "adaptive_dialogue_intro",
+      "title": "Adaptive Dialogue — Working Definition",
+      "source_file": "adaptive_dialogue_intro.md",
+      "version": "0.1.0",
+      "status": "draft",
+      "authority": "working_material",
+      "retrieval_enabled": true,
+      "approved_for_publication": false
+    }
+  ]
+}

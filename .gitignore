@@ -26,6 +26,8 @@ corpus/source/
 # Generated vector index / runtime cache
 *.index
 .cache/
+# Local working layer: derived index, rebuildable from registry + documents
+local_materials/.index/
 
 # Claude Code: local-only permission overrides. .claude/settings.json IS tracked
 # (it is the project guardrail); only the local override file is ignored.
