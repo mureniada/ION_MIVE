@@ -75,3 +75,7 @@ def validate_evaluation_record(instance: dict[str, Any]) -> None:
 
 def validate_stage_a_record(instance: dict[str, Any]) -> None:
     _validate(instance, "live1_stage_a_record.schema.json")
+
+
+def validate_coherence_rule_table(instance: dict[str, Any]) -> None:
+    _validate(instance, "live1_coherence_rule_table.schema.json")

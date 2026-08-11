@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Live1CoherenceRuleTable",
+  "type": "object",
+  "required": ["rule_table_version", "rules", "integrity"],
+  "properties": {
+    "rule_table_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["sha256"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "count_constraint": {
+      "type": "object",
+      "properties": {
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "rule": {
+      "type": "object",
+      "required": ["rule_id", "allowed_r6"],
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "r1": { "type": "string", "enum": ["SAME", "SHIFTED", "REVERSED", "UNRESOLVED"] },
+        "r4": { "type": "string", "enum": ["STRONGER", "SAME", "WEAKER", "SHIFT_TO_UNCERTAINTY", "SHIFT_FROM_UNCERTAINTY"] },
+        "r5": { "type": "string", "enum": ["NONE", "PARTIAL", "DIRECT"] },
+        "r2_counts": {
+          "type": "object",
+          "properties": {
+            "preserved": { "$ref": "#/$defs/count_constraint" },
+            "added": { "$ref": "#/$defs/count_constraint" },
+            "removed": { "$ref": "#/$defs/count_constraint" },
+            "modified": { "$ref": "#/$defs/count_constraint" },
+            "contradicted": { "$ref": "#/$defs/count_constraint" }
+          },
+          "additionalProperties": false
+        },
+        "allowed_r6": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["SEMANTICALLY_EQUIVALENT", "MINOR_CHANGE", "MATERIAL_CHANGE", "FUNDAMENTAL_CHANGE"]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

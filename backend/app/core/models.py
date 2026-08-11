@@ -408,3 +408,108 @@ class StageAGroupEvaluationRecord:
             "group_answer_hashes": {k: list(v) for k, v in self.group_answer_hashes.items()},
             "assessment": self.assessment.to_dict(),
         }
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-1 v0.2 coherence-gate infrastructure (v0.2, Phase 1) -- generic,
+# deterministic machinery only. No substantive rule content (B1/B2/B3/B4)
+# lives here; these types represent the *shape* of a frozen rule table, a
+# pure feature vector derived from StageARubricAssessment, and the result
+# of matching one against the other. See backend/app/modules/live1/
+# coherence_rule_table.py, coherence_features.py, coherence_evaluator.py.
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class CoherenceCountConstraint:
+    """One R2 status count's optional [min, max] bound. Both absent means
+    unconstrained; min == max expresses an exact count."""
+
+    min: int | None = None
+    max: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _prune({"min": self.min, "max": self.max})
+
+
+@dataclass(frozen=True)
+class CoherenceRule:
+    """One fixed rule row (S1). r1/r4/r5 absent means unconstrained for
+    that dimension (S2 -- alternatives are separate rows, never OR).
+    allowed_r6 is checked only after a row matches on the fields above --
+    R6 is never itself a matching input (S3)."""
+
+    rule_id: str
+    r1: str | None = None
+    r4: str | None = None
+    r5: str | None = None
+    r2_counts: dict[str, CoherenceCountConstraint] = field(default_factory=dict)
+    allowed_r6: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _prune({
+            "rule_id": self.rule_id,
+            "r1": self.r1,
+            "r4": self.r4,
+            "r5": self.r5,
+            "r2_counts": {k: v.to_dict() for k, v in self.r2_counts.items()},
+            "allowed_r6": list(self.allowed_r6),
+        })
+
+
+@dataclass(frozen=True)
+class CoherenceRuleTable:
+    """A validated, in-memory frozen rule table -- the output of the
+    loader (coherence_rule_table.py), never constructed by hand from
+    untrusted input."""
+
+    rule_table_version: str
+    rules: list[CoherenceRule]
+    integrity: dict[str, str] = field(default_factory=dict)  # {"sha256": "<64 hex>"}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule_table_version": self.rule_table_version,
+            "rules": [r.to_dict() for r in self.rules],
+            "integrity": dict(self.integrity),
+        }
+
+
+@dataclass(frozen=True)
+class CoherenceFeatureVector:
+    """Deterministic output of extract_coherence_features(). Carries only
+    R1/R4/R5, the six unambiguous R2 counts (no changed_count -- S7), and
+    observed R6 -- no provenance, arm, or Stage-B field (S8)."""
+
+    r1: str
+    r4: str
+    r5: str
+    total_claim_count: int
+    preserved_count: int
+    added_count: int
+    removed_count: int
+    modified_count: int
+    contradicted_count: int
+    non_preserved_count: int
+    observed_r6: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CoherenceResult:
+    """Output of evaluate_coherence(). NO_MATCH_ERROR/MULTIPLE_MATCH_ERROR
+    are rule-table applicability defects, distinct from COHERENCE_FAIL --
+    they never carry a fabricated matched_rule_id."""
+
+    outcome: str  # COHERENCE_PASS | COHERENCE_FAIL | NO_MATCH_ERROR | MULTIPLE_MATCH_ERROR
+    matched_rule_id: str | None = None
+    matched_rule_ids: list[str] = field(default_factory=list)  # populated only for MULTIPLE_MATCH_ERROR
+    feature_vector: CoherenceFeatureVector | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "matched_rule_id": self.matched_rule_id,
+            "matched_rule_ids": list(self.matched_rule_ids),
+            "feature_vector": self.feature_vector.to_dict() if self.feature_vector is not None else None,
+        }
