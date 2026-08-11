@@ -22,15 +22,27 @@ class OpenAIBackend:
             self._client = OpenAI(api_key=self._api_key) if self._api_key else OpenAI()
         return self._client
 
-    def generate(self, *, system: str, user: str, schema: dict) -> GenerationResult:
+    def generate(
+        self, *, system: str, user: str, schema: dict,
+        model: str | None = None,
+        reasoning: dict | None = None,
+        max_output_tokens: int | None = None,
+        tools: list | None = None,
+    ) -> GenerationResult:
+        """The four optional keyword parameters are additive: omitting all of
+        them reproduces exactly today's call (same three keys). A caller that
+        supplies `model` overrides the constructor-time model rather than
+        falling back to it -- this is how the LIVE-1 bridge (modules/live1/
+        openai_execution.py) guarantees a frozen requested_model is actually
+        used instead of silently defaulting to settings.openai_model."""
         client = self._ensure()
-        resp = client.responses.create(
-            model=self._model,
-            input=[
+        kwargs: dict = {
+            "model": model if model is not None else self._model,
+            "input": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            text={
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": "ive_report",
@@ -38,7 +50,14 @@ class OpenAIBackend:
                     "strict": True,
                 }
             },
-        )
+        }
+        if reasoning is not None:
+            kwargs["reasoning"] = reasoning
+        if max_output_tokens is not None:
+            kwargs["max_output_tokens"] = max_output_tokens
+        if tools is not None:
+            kwargs["tools"] = tools
+        resp = client.responses.create(**kwargs)
         text = getattr(resp, "output_text", "") or ""
         usage = getattr(resp, "usage", None)
         in_tok = getattr(usage, "input_tokens", None) if usage else None
@@ -46,4 +65,5 @@ class OpenAIBackend:
         return GenerationResult(
             text=text, input_tokens=in_tok, output_tokens=out_tok,
             usage_is_estimated=usage is None,
+            reported_model=getattr(resp, "model", None),
         )

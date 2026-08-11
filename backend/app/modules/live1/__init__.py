@@ -19,6 +19,12 @@ from .generation_control import (
     UnsupportedGenerationParameterError,
     validate_generation_parameters,
 )
+from .openai_execution import (
+    LiveOpenAIPolicyError,
+    LiveOpenAIResult,
+    build_openai_request_kwargs,
+    run_live_openai,
+)
 from .snapshot_bridge import SnapshotValidationError, context_pack_from_snapshot
 
 __all__ = [
@@ -28,11 +34,15 @@ __all__ = [
     "PROVIDER_SPECIFIC_ALLOWLIST",
     "EvaluationValidationError",
     "HumanBlindEvaluator",
+    "LiveOpenAIPolicyError",
+    "LiveOpenAIResult",
     "ProvenanceEntry",
     "SnapshotValidationError",
     "UnsupportedGenerationParameterError",
     "assign_blind_labels",
+    "build_openai_request_kwargs",
     "context_pack_from_snapshot",
     "resolve_provenance",
+    "run_live_openai",
     "validate_generation_parameters",
 ]

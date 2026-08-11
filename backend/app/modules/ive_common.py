@@ -24,6 +24,7 @@ class GenerationResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     usage_is_estimated: bool = False
+    reported_model: str | None = None
 
 
 IVE_SYSTEM_PROMPT = (
