@@ -5,6 +5,7 @@ from .validators import (
     validate_evaluation_record,
     validate_ive_report,
     validate_mive_result,
+    validate_stage_a_record,
     SchemaValidationError,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "validate_evaluation_record",
     "validate_ive_report",
     "validate_mive_result",
+    "validate_stage_a_record",
     "SchemaValidationError",
 ]

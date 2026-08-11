@@ -346,3 +346,65 @@ class EvaluationRecord:
             "evaluation_stage": self.evaluation_stage,
             "assessment": self.assessment.to_dict(),
         }
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-1 Stage-A (ANSWER_ONLY) HUMAN_BLIND group recording (v0.1) -- additive,
+# parallel to EvaluationRecord above (which stays unchanged). EvaluationRecord
+# only represents one blinded pair; the frozen LIVE-1 protocol also needs two
+# comparison units a pair cannot express: WITHIN_GROUP (one anonymous group
+# of exactly three answers) and CROSS_GROUP (two anonymous groups of exactly
+# three each). StageARubricAssessment covers only R1/R2/R4/R5/R6 -- R3
+# (evidence_dependence) and attribution_trace are Stage-B-only concepts with
+# no field here at all, not optional or defaulted.
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class StageARubricAssessment:
+    """LIVE-1 Semantic Rubric v0.1, Stage A (ANSWER_ONLY) fields only."""
+
+    core_conclusion: str                # R1: SAME | SHIFTED | REVERSED | UNRESOLVED
+    material_claims: list[ClaimDelta]   # R2: claim-level, not a scalar summary
+    epistemic_stance: str               # R4: STRONGER | SAME | WEAKER | SHIFT_TO_UNCERTAINTY | SHIFT_FROM_UNCERTAINTY
+    material_contradiction: str         # R5: NONE | PARTIAL | DIRECT
+    overall_semantic_effect: str        # R6: SEMANTICALLY_EQUIVALENT | MINOR_CHANGE | MATERIAL_CHANGE | FUNDAMENTAL_CHANGE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "core_conclusion": self.core_conclusion,
+            "material_claims": [asdict(c) for c in self.material_claims],
+            "epistemic_stance": self.epistemic_stance,
+            "material_contradiction": self.material_contradiction,
+            "overall_semantic_effect": self.overall_semantic_effect,
+        }
+
+
+@dataclass(frozen=True)
+class StageAGroupEvaluationRecord:
+    """LIVE-1 Stage-A (ANSWER_ONLY) HUMAN_BLIND group-comparison record.
+    Represents WITHIN_GROUP or CROSS_GROUP comparison units. Kept fully
+    separate from EvaluationRecord; neither replaces the other."""
+
+    experiment_id: str
+    evaluator_identity: str
+    evaluator_type: str          # "HUMAN"
+    evaluation_profile: str      # "LIVE1-HUMAN-BLIND-v1"
+    rubric_version: str
+    evaluation_stage: str        # fixed "A_ANSWER_ONLY"
+    comparison_scope: str        # "WITHIN_GROUP" | "CROSS_GROUP"
+    timestamp: str
+    group_answer_hashes: dict[str, list[str]]   # {"X": [h,h,h]} or {"X":[...], "Y":[...]}
+    assessment: StageARubricAssessment
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "evaluator_identity": self.evaluator_identity,
+            "evaluator_type": self.evaluator_type,
+            "evaluation_profile": self.evaluation_profile,
+            "rubric_version": self.rubric_version,
+            "evaluation_stage": self.evaluation_stage,
+            "comparison_scope": self.comparison_scope,
+            "timestamp": self.timestamp,
+            "group_answer_hashes": {k: list(v) for k, v in self.group_answer_hashes.items()},
+            "assessment": self.assessment.to_dict(),
+        }

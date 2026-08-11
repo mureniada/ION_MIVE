@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Live1StageAGroupRecord",
+  "type": "object",
+  "required": [
+    "experiment_id",
+    "evaluator_identity",
+    "evaluator_type",
+    "evaluation_profile",
+    "rubric_version",
+    "evaluation_stage",
+    "comparison_scope",
+    "timestamp",
+    "group_answer_hashes",
+    "assessment"
+  ],
+  "properties": {
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluator_identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluator_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluation_profile": {
+      "type": "string",
+      "enum": ["LIVE1-HUMAN-BLIND-v1"]
+    },
+    "rubric_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluation_stage": {
+      "type": "string",
+      "enum": ["A_ANSWER_ONLY"]
+    },
+    "comparison_scope": {
+      "type": "string",
+      "enum": ["WITHIN_GROUP", "CROSS_GROUP"]
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    },
+    "group_answer_hashes": {
+      "type": "object",
+      "propertyNames": { "enum": ["X", "Y"] },
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 3,
+        "maxItems": 3
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "required": [
+        "core_conclusion",
+        "material_claims",
+        "epistemic_stance",
+        "material_contradiction",
+        "overall_semantic_effect"
+      ],
+      "properties": {
+        "core_conclusion": {
+          "type": "string",
+          "enum": ["SAME", "SHIFTED", "REVERSED", "UNRESOLVED"]
+        },
+        "material_claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["claim_text", "status"],
+            "properties": {
+              "claim_text": { "type": "string" },
+              "status": {
+                "type": "string",
+                "enum": ["PRESERVED", "ADDED", "REMOVED", "MODIFIED", "CONTRADICTED"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "epistemic_stance": {
+          "type": "string",
+          "enum": ["STRONGER", "SAME", "WEAKER", "SHIFT_TO_UNCERTAINTY", "SHIFT_FROM_UNCERTAINTY"]
+        },
+        "material_contradiction": {
+          "type": "string",
+          "enum": ["NONE", "PARTIAL", "DIRECT"]
+        },
+        "overall_semantic_effect": {
+          "type": "string",
+          "enum": ["SEMANTICALLY_EQUIVALENT", "MINOR_CHANGE", "MATERIAL_CHANGE", "FUNDAMENTAL_CHANGE"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "comparison_scope": { "const": "WITHIN_GROUP" } } },
+      "then": { "properties": { "group_answer_hashes": { "minProperties": 1, "maxProperties": 1 } } }
+    },
+    {
+      "if": { "properties": { "comparison_scope": { "const": "CROSS_GROUP" } } },
+      "then": { "properties": { "group_answer_hashes": { "minProperties": 2, "maxProperties": 2 } } }
+    }
+  ],
+  "additionalProperties": false
+}

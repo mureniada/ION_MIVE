@@ -26,21 +26,35 @@ from .openai_execution import (
     run_live_openai,
 )
 from .snapshot_bridge import SnapshotValidationError, context_pack_from_snapshot
+from .stage_a_evaluation import (
+    CROSS_GROUP,
+    STAGE_A_STAGE,
+    WITHIN_GROUP,
+    StageAValidationError,
+    build_cross_group_record,
+    build_within_group_record,
+)
 
 __all__ = [
+    "CROSS_GROUP",
     "EVALUATION_PROFILE_HUMAN_BLIND",
     "PROVIDER_GEMINI",
     "PROVIDER_OPENAI",
     "PROVIDER_SPECIFIC_ALLOWLIST",
+    "STAGE_A_STAGE",
+    "WITHIN_GROUP",
     "EvaluationValidationError",
     "HumanBlindEvaluator",
     "LiveOpenAIPolicyError",
     "LiveOpenAIResult",
     "ProvenanceEntry",
     "SnapshotValidationError",
+    "StageAValidationError",
     "UnsupportedGenerationParameterError",
     "assign_blind_labels",
+    "build_cross_group_record",
     "build_openai_request_kwargs",
+    "build_within_group_record",
     "context_pack_from_snapshot",
     "resolve_provenance",
     "run_live_openai",
