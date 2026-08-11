@@ -67,3 +67,7 @@ def validate_ive_report(instance: dict[str, Any]) -> None:
 
 def validate_mive_result(instance: dict[str, Any]) -> None:
     _validate(instance, "mive_result.schema.json")
+
+
+def validate_evaluation_record(instance: dict[str, Any]) -> None:
+    _validate(instance, "live1_evaluation_record.schema.json")

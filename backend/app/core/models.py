@@ -200,3 +200,149 @@ class AskResult:
 def _prune(d: dict[str, Any]) -> dict[str, Any]:
     """Drop optional keys that are None so schema `additionalProperties` stays clean."""
     return {k: v for k, v in d.items() if v is not None}
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-1 experiment configuration (v0.1 — architecture only, not wired into
+# Core.ask()/container.py; see backend/app/modules/live1/). Kept deliberately
+# separate from the T4 run-record contract rather than merged into it.
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class GenerationControlSurface:
+    """The generation parameters LIVE-1 can freeze, plus an explicit escape
+    hatch for provider-only parameters (e.g. Gemini's `seed`/`top_k`, which
+    OpenAI's Responses API does not expose at all — see modules/live1).
+
+    No values are chosen here; this is a shape, not a policy.
+    """
+
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
+    provider_specific: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_output_tokens": self.max_output_tokens,
+            "provider_specific": dict(self.provider_specific),
+        }
+
+
+@dataclass(frozen=True)
+class LiveRunConfig:
+    """One frozen, immutable LIVE-1 experiment run configuration.
+
+    `reported_model` is never defaulted to `requested_model` — it stays
+    `None` (honest UNKNOWN) until a provider response actually supplies one.
+    """
+
+    experiment_id: str
+    run_id: str
+    arm: str
+    provider: str
+    requested_model: str
+    context_snapshot_ref: str
+    context_snapshot_sha256: str
+    prompt_version: str
+    generation: GenerationControlSurface
+    tools_policy: str
+    evaluation_profile: str
+    rubric_version: str
+    reported_model: str | None = None
+    prompt_sha256: str | None = None
+    max_output_tokens: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "run_id": self.run_id,
+            "arm": self.arm,
+            "provider": self.provider,
+            "requested_model": self.requested_model,
+            "reported_model": self.reported_model,
+            "context_snapshot_ref": self.context_snapshot_ref,
+            "context_snapshot_sha256": self.context_snapshot_sha256,
+            "prompt_version": self.prompt_version,
+            "prompt_sha256": self.prompt_sha256,
+            "generation": self.generation.to_dict(),
+            "tools_policy": self.tools_policy,
+            "max_output_tokens": self.max_output_tokens,
+            "evaluation_profile": self.evaluation_profile,
+            "rubric_version": self.rubric_version,
+        }
+
+
+# --------------------------------------------------------------------------- #
+# LIVE-1 Semantic Rubric v0.1 / evaluation (HUMAN_BLIND only — see
+# backend/app/modules/live1/evaluation.py. LLM_JUDGE / HYBRID / DUAL_JUDGE are
+# FUTURE / NOT IMPLEMENTED: EvaluationPort is deliberately just a Protocol so
+# they *could* be added later, but no such class exists in this codebase.)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ClaimDelta:
+    claim_text: str
+    status: str  # PRESERVED | ADDED | REMOVED | MODIFIED | CONTRADICTED
+
+
+@dataclass(frozen=True)
+class RubricAssessment:
+    """LIVE-1 Semantic Rubric v0.1 (R1-R6 + ATTRIBUTION_TRACE)."""
+
+    core_conclusion: str            # SAME | SHIFTED | REVERSED | UNRESOLVED
+    material_claims: list[ClaimDelta]
+    evidence_dependence: str        # NONE | WEAK | MATERIAL | DIRECT
+    epistemic_stance: str           # STRONGER | SAME | WEAKER | SHIFT_TO_UNCERTAINTY | SHIFT_FROM_UNCERTAINTY
+    material_contradiction: str     # NONE | PARTIAL | DIRECT
+    overall_semantic_effect: str    # SEMANTICALLY_EQUIVALENT | MINOR_CHANGE | MATERIAL_CHANGE | FUNDAMENTAL_CHANGE
+    attribution_trace: str          # NO_VISIBLE_LINK | PLAUSIBLE_LINK | DIRECT_EVIDENCE_LINK | NOT_DETERMINABLE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "core_conclusion": self.core_conclusion,
+            "material_claims": [asdict(c) for c in self.material_claims],
+            "evidence_dependence": self.evidence_dependence,
+            "epistemic_stance": self.epistemic_stance,
+            "material_contradiction": self.material_contradiction,
+            "overall_semantic_effect": self.overall_semantic_effect,
+            "attribution_trace": self.attribution_trace,
+        }
+
+
+@dataclass(frozen=True)
+class BlindedAnswer:
+    """An answer stripped of provider/model/arm identity for blind evaluation.
+    Carries only what a blinded human evaluator may see."""
+
+    label: str  # "X" | "Y" — neutral, independently assignable
+    text: str
+    answer_hash: str
+
+
+@dataclass(frozen=True)
+class EvaluationRecord:
+    """Output of one EvaluationPort.evaluate() call (docs: LIVE-1 rubric)."""
+
+    evaluator_identity: str
+    evaluator_type: str          # e.g. "HUMAN" — LLM_JUDGE/HYBRID/DUAL_JUDGE: FUTURE / NOT IMPLEMENTED
+    evaluation_profile: str      # "LIVE1-HUMAN-BLIND-v1" for v0.1
+    rubric_version: str
+    timestamp: str
+    answer_hashes: list[str]
+    blind_labels: list[str]      # e.g. ["X", "Y"] — never the real arm/provider
+    evaluation_stage: str        # ANSWER_ONLY | EVIDENCE_AWARE_ATTRIBUTION
+    assessment: RubricAssessment
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evaluator_identity": self.evaluator_identity,
+            "evaluator_type": self.evaluator_type,
+            "evaluation_profile": self.evaluation_profile,
+            "rubric_version": self.rubric_version,
+            "timestamp": self.timestamp,
+            "answer_hashes": list(self.answer_hashes),
+            "blind_labels": list(self.blind_labels),
+            "evaluation_stage": self.evaluation_stage,
+            "assessment": self.assessment.to_dict(),
+        }

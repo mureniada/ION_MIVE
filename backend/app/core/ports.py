@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from .models import ContextPack, Evidence, IVEReport, MIVEResult
+from .models import BlindedAnswer, ContextPack, EvaluationRecord, Evidence, IVEReport, MIVEResult
 
 
 @runtime_checkable
@@ -85,6 +85,27 @@ class ClockPort(Protocol):
     def now_iso(self) -> str: ...
 
     def monotonic_ms(self) -> float: ...
+
+
+@runtime_checkable
+class EvaluationPort(Protocol):
+    """LIVE-1 semantic evaluation (v0.1: HUMAN_BLIND only).
+
+    Implementations receive a blinded answer pair and produce one
+    EvaluationRecord. FUTURE / NOT IMPLEMENTED: LLM_JUDGE, HYBRID,
+    DUAL_JUDGE — this Protocol exists so they *could* be added later
+    without changing the interface, but no such implementation exists in
+    this codebase.
+    """
+
+    def evaluate(
+        self,
+        pair: tuple[BlindedAnswer, BlindedAnswer],
+        *,
+        rubric_version: str,
+        evaluation_profile: str,
+        evidence: list[Evidence] | None = None,
+    ) -> EvaluationRecord: ...
 
 
 @runtime_checkable

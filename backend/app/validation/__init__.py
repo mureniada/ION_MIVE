@@ -2,6 +2,7 @@
 
 from .validators import (
     validate_context_pack,
+    validate_evaluation_record,
     validate_ive_report,
     validate_mive_result,
     SchemaValidationError,
@@ -9,6 +10,7 @@ from .validators import (
 
 __all__ = [
     "validate_context_pack",
+    "validate_evaluation_record",
     "validate_ive_report",
     "validate_mive_result",
     "SchemaValidationError",

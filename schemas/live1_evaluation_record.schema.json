@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Live1EvaluationRecord",
+  "type": "object",
+  "required": [
+    "evaluator_identity",
+    "evaluator_type",
+    "evaluation_profile",
+    "rubric_version",
+    "timestamp",
+    "answer_hashes",
+    "blind_labels",
+    "evaluation_stage",
+    "assessment"
+  ],
+  "properties": {
+    "evaluator_identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluator_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evaluation_profile": {
+      "type": "string",
+      "enum": ["LIVE1-HUMAN-BLIND-v1"]
+    },
+    "rubric_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    },
+    "answer_hashes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "blind_labels": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evaluation_stage": {
+      "type": "string",
+      "enum": ["ANSWER_ONLY", "EVIDENCE_AWARE_ATTRIBUTION"]
+    },
+    "assessment": {
+      "type": "object",
+      "required": [
+        "core_conclusion",
+        "material_claims",
+        "evidence_dependence",
+        "epistemic_stance",
+        "material_contradiction",
+        "overall_semantic_effect",
+        "attribution_trace"
+      ],
+      "properties": {
+        "core_conclusion": {
+          "type": "string",
+          "enum": ["SAME", "SHIFTED", "REVERSED", "UNRESOLVED"]
+        },
+        "material_claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["claim_text", "status"],
+            "properties": {
+              "claim_text": { "type": "string" },
+              "status": {
+                "type": "string",
+                "enum": ["PRESERVED", "ADDED", "REMOVED", "MODIFIED", "CONTRADICTED"]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "evidence_dependence": {
+          "type": "string",
+          "enum": ["NONE", "WEAK", "MATERIAL", "DIRECT"]
+        },
+        "epistemic_stance": {
+          "type": "string",
+          "enum": ["STRONGER", "SAME", "WEAKER", "SHIFT_TO_UNCERTAINTY", "SHIFT_FROM_UNCERTAINTY"]
+        },
+        "material_contradiction": {
+          "type": "string",
+          "enum": ["NONE", "PARTIAL", "DIRECT"]
+        },
+        "overall_semantic_effect": {
+          "type": "string",
+          "enum": ["SEMANTICALLY_EQUIVALENT", "MINOR_CHANGE", "MATERIAL_CHANGE", "FUNDAMENTAL_CHANGE"]
+        },
+        "attribution_trace": {
+          "type": "string",
+          "enum": ["NO_VISIBLE_LINK", "PLAUSIBLE_LINK", "DIRECT_EVIDENCE_LINK", "NOT_DETERMINABLE"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
