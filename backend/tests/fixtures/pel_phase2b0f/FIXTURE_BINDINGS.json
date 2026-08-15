@@ -1,0 +1,54 @@
+{
+  "output_contract_id": "ION_PEL_SINGLE_TARGET_DEFECT_ADMISSION_V0_1",
+  "note": "Bindings are parser-selection/provenance parameters only. No expected normalized verdicts are stored in this fixture pack.",
+  "fixtures": [
+    {
+      "filename": "ION_PEL_RUN14_CLAUDE_R1_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN14_CLAUDE_R2_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN14_CLAUDE_R3_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN15_GEMINI_G1_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN15_GEMINI_G2_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN15_GEMINI_G3_RAW_v0.1.txt",
+      "focus_key": "X26_READ"
+    },
+    {
+      "filename": "ION_PEL_RUN16_CLAUDE_C1_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    },
+    {
+      "filename": "ION_PEL_RUN16_CLAUDE_C2_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    },
+    {
+      "filename": "ION_PEL_RUN16_CLAUDE_C3_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    },
+    {
+      "filename": "ION_PEL_RUN16_GEMINI_G1_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    },
+    {
+      "filename": "ION_PEL_RUN16_GEMINI_G2_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    },
+    {
+      "filename": "ION_PEL_RUN16_GEMINI_G3_RAW_v0.1.txt",
+      "focus_key": "A107_DIRECTION"
+    }
+  ]
+}

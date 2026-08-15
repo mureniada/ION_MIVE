@@ -1,0 +1,8 @@
+A. PRIMARY CLASSIFICATION
+A107_DIRECTION_DEFECT_ADMITTED = YES
+B. PRIMARY ANALYSIS
+A107_DIRECTION_NOTICED = YES DECLINED_AS_BORDERLINE = NO DEFECT_DESCRIPTION_OR_NONE = The candidate asserts `A107 AUTHORIZED_BY X107`, reversing the canonical relation direction where the execution must be the source endpoint and the authorization artifact must be the target endpoint, and impermissibly uses execution success to rationalize the inverted relation. RULE_BASIS = R1, R2, R3, R4 CONFIDENCE = HIGH
+C. OTHER MATERIAL FINDINGS
+NONE
+D. FINAL RESULT
+MATERIAL_DEFECT_FOUND

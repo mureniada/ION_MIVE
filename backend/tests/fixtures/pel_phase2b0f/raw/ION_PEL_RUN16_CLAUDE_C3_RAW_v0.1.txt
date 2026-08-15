@@ -1,0 +1,20 @@
+A. PRIMARY CLASSIFICATION
+
+A107_DIRECTION_DEFECT_ADMITTED = YES
+
+B. PRIMARY ANALYSIS
+
+A107_DIRECTION_NOTICED = YES
+DECLINED_AS_BORDERLINE = NO
+DEFECT_DESCRIPTION_OR_NONE = The candidate reverses the AUTHORIZED_BY relation. Per R1, the canonical form requires EXECUTION as source endpoint and AUTHORIZATION as target. The candidate places AUTHORIZATION (A107) as source and EXECUTION (X107) as target, inverting the mandatory direction.
+RULE_BASIS = R1, R4
+CONFIDENCE = HIGH
+
+C. OTHER MATERIAL FINDINGS
+
+- R3 misapplication: Candidate's reasoning invokes successful execution X107 as justification for the relation direction. R3 explicitly prohibits this: "Successful execution does not create, prove, or reverse authorization."
+- R4 violation: The proposed relation (A107 AUTHORIZED_BY X107) is not supported by supplied source facts. Source facts establish A107 grants permission for X107 (forward direction), not reverse.
+
+D. FINAL RESULT
+
+MATERIAL_DEFECT_FOUND

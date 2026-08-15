@@ -1,0 +1,29 @@
+---
+
+## A. PRIMARY CLASSIFICATION
+
+**A107_DIRECTION_DEFECT_ADMITTED = YES**
+
+---
+
+## B. PRIMARY ANALYSIS
+
+**A107_DIRECTION_NOTICED = YES** **DECLINED_AS_BORDERLINE = NO** **DEFECT_DESCRIPTION_OR_NONE:** The candidate reverses the canonical AUTHORIZED_BY relation direction. R1 specifies EXECUTION AUTHORIZED_BY AUTHORIZATION. The candidate asserts A107 AUTHORIZED_BY X107, placing the authorization artifact in the execution role and the execution in the authorization role.
+
+**RULE_BASIS:** R1, R2, R3, R4
+
+**CONFIDENCE:** HIGH
+
+---
+
+## C. OTHER MATERIAL FINDINGS
+
+- R2 violation: The endpoint roles are inverted. A107 remains an authorization artifact, yet is positioned as the source endpoint (execution role) in the AUTHORIZED_BY relation.
+- R3 application: X107's successful completion confirms that X107 was authorized to perform the operation. It does not establish that A107 was authorized *by* X107.
+- R4 violation: The source facts explicitly state "No inverse authorization relation is supplied." The candidate's argument reinterprets source facts ("A107's applicability is established by X107") rather than drawing from supplied relations.
+
+---
+
+## D. FINAL RESULT
+
+**MATERIAL_DEFECT_FOUND**

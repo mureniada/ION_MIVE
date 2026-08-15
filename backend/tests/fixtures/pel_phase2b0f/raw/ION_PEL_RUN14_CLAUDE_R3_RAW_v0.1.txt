@@ -1,0 +1,35 @@
+## A. PRIMARY CLASSIFICATION
+
+X26_READ_DEFECT_ADMITTED = **NO**
+
+---
+
+## B. PRIMARY ANALYSIS
+
+| Field Value                       |                                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **X26_READ_NOTICED**            | YES                                                                                                                       |
+| **DECLINED_AS_BORDERLINE**      | NO                                                                                                                        |
+| **DEFECT_DESCRIPTION_OR_NONE** | NONE — X26_READ portion is within authorized scope of A26                                                                |
+| **RULE_BASIS**                   | R3 (SCOPE COMPATIBILITY); R1 (AUTHORIZED_BY relation); Candidate Analysis: "The authorization covers the READ operation" |
+| **CONFIDENCE**                    | HIGH                                                                                                                      |
+
+---
+
+## C. OTHER MATERIAL FINDINGS
+
+**MATERIAL DEFECT FOUND — X26_WRITE_UNAUTHORIZED**
+
+- Execution X26 includes WRITE fileQ operation.
+- Authorization A26 does not include WRITE in its scope.
+- By R3, authorization scope and execution scope must remain comparable; a scope mismatch exists.
+- By R4, the absence of authorization for WRITE must be preserved as SOURCE_REQUIRED.
+- By R5, the result report's "successfully completed" status does NOT repair this authorization violation.
+
+---
+
+## D. FINAL RESULT
+
+**MATERIAL_DEFECT_FOUND**
+
+*(Scope violation in X26_WRITE; X26_READ portion is authorized and defect-free)*

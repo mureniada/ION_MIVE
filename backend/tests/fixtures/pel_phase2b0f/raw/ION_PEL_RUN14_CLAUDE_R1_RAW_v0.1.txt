@@ -1,0 +1,33 @@
+**ION PEL RUN 12 — BLIND CHECKER AUDIT OUTPUT**
+
+---
+
+**A. PRIMARY CLASSIFICATION**
+
+X26_READ_DEFECT_ADMITTED = **YES**
+
+---
+
+**B. PRIMARY ANALYSIS**
+
+- X26_READ_NOTICED = **YES**
+- DECLINED_AS_BORDERLINE = **NO**
+- DEFECT_DESCRIPTION: Execution X26 contains an authorized READ operation on fileQ, but the execution scope includes an unauthorized WRITE operation on the same file. Authorization A26 grants READ only. The executed scope {READ fileQ, WRITE fileQ} exceeds the authorized scope {READ fileQ}, creating a scope violation that encompasses the READ operation within an unauthorized execution boundary.
+- RULE_BASIS: R3 (SCOPE COMPATIBILITY — authorization and execution scopes must remain comparable; scope mismatch cannot be repaired by derived identity invention per source supply constraint), R5 (TECHNICAL SUCCESS — completion success does not repair authorization scope mismatch)
+- CONFIDENCE = **HIGH**
+
+---
+
+**C. OTHER MATERIAL FINDINGS**
+
+NONE
+
+---
+
+**D. FINAL RESULT**
+
+**MATERIAL_DEFECT_FOUND**
+
+---
+
+**Basis:** The case presents an explicit scope violation. The authorized scope and executed scope are not compatible. No source-supplied subexecution objects exist to decompose the authorization relationship. The WRITE operation remains unauthorized and unresolved per R4 (UNKNOWN PRESERVATION). The scope violation is material.

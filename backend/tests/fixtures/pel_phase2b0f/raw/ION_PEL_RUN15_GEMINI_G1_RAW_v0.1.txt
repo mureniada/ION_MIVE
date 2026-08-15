@@ -1,0 +1,7 @@
+A. PRIMARY CLASSIFICATION
+X26_READ_DEFECT_ADMITTED = YES
+B. PRIMARY ANALYSIS X26_READ_NOTICED = YES DECLINED_AS_BORDERLINE = NO DEFECT_DESCRIPTION_OR_NONE = The candidate analysis explicitly invents derived execution identities (X26_READ and X26_WRITE) to represent a scope mismatch through analytical decomposition. This directly violates the rules against creating new endpoints to make relations easier to express, inventing subexecutions not supplied by the source, and instantiating semantic objects for analytical convenience. RULE_BASIS = R2, R3, R4 CONFIDENCE = HIGH
+C. OTHER MATERIAL FINDINGS
+NONE
+D. FINAL RESULT
+MATERIAL_DEFECT_FOUND

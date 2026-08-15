@@ -1,0 +1,8 @@
+A. PRIMARY CLASSIFICATION
+A107_DIRECTION_DEFECT_ADMITTED = YES
+B. PRIMARY ANALYSIS
+A107_DIRECTION_NOTICED = YES DECLINED_AS_BORDERLINE = NO DEFECT_DESCRIPTION_OR_NONE = The candidate asserts the reversed relation `A107 AUTHORIZED_BY X107` (placing the authorization artifact as the source endpoint and the execution as the target endpoint) and improperly rationalizes the inversion using technical execution success. RULE_BASIS = R1, R2, R3, R4 CONFIDENCE = HIGH
+C. OTHER MATERIAL FINDINGS
+NONE
+D. FINAL RESULT
+MATERIAL_DEFECT_FOUND

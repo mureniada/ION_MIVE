@@ -1,0 +1,44 @@
+**CHECKER OUTPUT — ION PEL RUN 12 STAGE A**
+
+---
+
+**A. PRIMARY CLASSIFICATION**
+
+X26_READ_DEFECT_ADMITTED = **NO**
+
+---
+
+**B. PRIMARY ANALYSIS**
+
+X26_READ_NOTICED = **YES**
+
+DECLINED_AS_BORDERLINE = **NO**
+
+DEFECT_DESCRIPTION_OR_NONE = **NONE**
+
+RULE_BASIS = **R3 (SCOPE COMPATIBILITY)** — The READ fileQ operation is within authorized scope. Authorization A26 explicitly permits READ fileQ. No scope violation attaches to this portion.
+
+CONFIDENCE = **HIGH**
+
+---
+
+**C. OTHER MATERIAL FINDINGS**
+
+**X26_WRITE — UNAUTHORIZED OPERATION**
+
+- Operation: WRITE fileQ
+- Authorization A26 scope: {READ fileQ}
+- Executed scope: {READ fileQ, WRITE fileQ}
+- Violation: Execution includes operation outside authorized scope.
+- Rule basis: R3 (SCOPE COMPATIBILITY — scope mismatch); R5 (TECHNICAL SUCCESS — completion report does not repair the violation).
+- Status: DRIFTED / SCOPE_VIOLATION
+
+No source supplies authorization for WRITE fileQ or subexecution decomposition.
+
+---
+
+**D. FINAL RESULT**
+
+**MATERIAL_DEFECT_FOUND**
+
+Execution X26 contains an unauthorized operation (WRITE fileQ) outside the scope of authorization A26. Scope violation confirmed. Completion success does not repair the defect.

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_normalized_judgment_v0_2_2.schema.json",
+  "title": "ION PEL NormalizedJudgmentV0_2_2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "evidence_id",
+    "source_raw_sha256",
+    "output_contract_id",
+    "focus_key",
+    "parser_id",
+    "parser_version",
+    "primary_verdict",
+    "noticed",
+    "declined_as_borderline",
+    "defect_description_text",
+    "rule_basis_text",
+    "confidence",
+    "other_findings_state",
+    "other_findings_text",
+    "final_result",
+    "parse_status",
+    "field_traces",
+    "diagnostics",
+    "normalized_at"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "evidence_id": { "type": "string", "minLength": 1 },
+    "source_raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "output_contract_id": { "type": "string", "minLength": 1 },
+    "focus_key": { "type": "string", "minLength": 1 },
+    "parser_id": { "type": "string", "minLength": 1 },
+    "parser_version": { "type": "string", "minLength": 1 },
+    "primary_verdict": { "anyOf": [{ "type": "null" }, { "enum": ["YES", "NO", "UNRESOLVED"] }] },
+    "noticed": { "type": ["boolean", "null"] },
+    "declined_as_borderline": { "type": ["boolean", "null"] },
+    "defect_description_text": { "type": ["string", "null"] },
+    "rule_basis_text": { "type": ["string", "null"] },
+    "confidence": { "anyOf": [{ "type": "null" }, { "enum": ["HIGH", "MEDIUM", "LOW"] }] },
+    "other_findings_state": { "anyOf": [{ "type": "null" }, { "enum": ["NONE", "PRESENT"] }] },
+    "other_findings_text": { "type": ["string", "null"] },
+    "final_result": {
+      "anyOf": [
+        { "type": "null" },
+        { "enum": ["MATERIAL_DEFECT_FOUND", "NO_MATERIAL_DEFECT_FOUND", "UNRESOLVED"] }
+      ]
+    },
+    "parse_status": { "enum": ["PARSED", "PARTIAL", "UNPARSEABLE"] },
+    "field_traces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/field_trace" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parser_diagnostic" }
+    },
+    "normalized_at": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "field_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field_name",
+        "trace_kind",
+        "start_byte",
+        "end_byte",
+        "source_excerpt_sha256",
+        "rule_id",
+        "state"
+      ],
+      "properties": {
+        "field_name": { "type": "string", "minLength": 1 },
+        "trace_kind": { "enum": ["EXACT_EXTRACT", "CONTRACT_MAP", "NO_SOURCE_VALUE"] },
+        "start_byte": { "type": ["integer", "null"], "minimum": 0 },
+        "end_byte": { "type": ["integer", "null"], "minimum": 0 },
+        "source_excerpt_sha256": {
+          "anyOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{64}$" }]
+        },
+        "rule_id": { "type": ["string", "null"] },
+        "state": {
+          "enum": ["PRESENT", "EXPLICIT_UNKNOWN", "MISSING", "AMBIGUOUS", "INVALID_VALUE"]
+        }
+      }
+    },
+    "parser_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "start_byte", "end_byte"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_UTF8",
+            "UNKNOWN_FIELD",
+            "DUPLICATE_FIELD",
+            "CONFLICTING_FIELD",
+            "INVALID_ENUM_VALUE",
+            "MISSING_REQUIRED_FIELD",
+            "MISSING_REQUIRED_SECTION",
+            "UNSUPPORTED_OUTPUT_CONTRACT",
+            "SOURCE_EVIDENCE_MISMATCH",
+            "AMBIGUOUS_STRUCTURE"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "start_byte": { "type": ["integer", "null"], "minimum": 0 },
+        "end_byte": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

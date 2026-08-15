@@ -1,0 +1,7 @@
+A. PRIMARY CLASSIFICATION
+X26_READ_DEFECT_ADMITTED = YES
+B. PRIMARY ANALYSIS X26_READ_NOTICED = YES DECLINED_AS_BORDERLINE = NO DEFECT_DESCRIPTION_OR_NONE = The candidate analysis explicitly invents subexecutions (X26_READ and X26_WRITE) for analytical convenience to resolve a scope representation. This directly violates the semantic rules prohibiting the creation of new endpoints and the invention of derived execution identities not explicitly provided by the source. RULE_BASIS = R2, R3, R4 CONFIDENCE = HIGH
+C. OTHER MATERIAL FINDINGS
+NONE
+D. FINAL RESULT
+MATERIAL_DEFECT_FOUND
