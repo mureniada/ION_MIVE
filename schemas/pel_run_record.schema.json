@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_run_record.schema.json",
+  "title": "ION PEL RunRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "plan_id",
+    "condition_id",
+    "replay_index",
+    "model_family",
+    "model_identifier",
+    "adapter_id",
+    "adapter_version",
+    "task_sha256",
+    "prompt_sha256",
+    "started_at",
+    "completed_at",
+    "raw_artifact_id",
+    "raw_sha256",
+    "raw_bytes",
+    "capture_mode",
+    "run_status"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "condition_id": { "type": "string", "minLength": 1 },
+    "replay_index": { "type": "integer", "minimum": 0 },
+    "model_family": { "type": "string", "minLength": 1 },
+    "model_identifier": { "type": "string", "minLength": 1 },
+    "adapter_id": { "type": "string", "minLength": 1 },
+    "adapter_version": { "type": "string", "minLength": 1 },
+    "task_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "started_at": { "type": ["string", "null"] },
+    "completed_at": { "type": ["string", "null"] },
+    "raw_artifact_id": { "type": "string", "minLength": 1 },
+    "raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "raw_bytes": { "type": "integer", "minimum": 0 },
+    "capture_mode": { "type": "string", "minLength": 1 },
+    "run_status": {
+      "enum": ["PLANNED", "RECEIVED", "RAW_FROZEN", "NORMALIZED", "FAILED"]
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_task_spec.schema.json",
+  "title": "ION PEL TaskSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "task_version",
+    "task_class",
+    "semantic_boundary",
+    "bundle_filename",
+    "bundle_sha256",
+    "bundle_bytes",
+    "prompt_id",
+    "prompt_sha256",
+    "prompt_bytes",
+    "output_contract_id",
+    "created_at",
+    "status",
+    "provenance"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "task_version": { "type": "string", "minLength": 1 },
+    "task_class": { "type": "string", "minLength": 1 },
+    "semantic_boundary": { "type": ["string", "null"] },
+    "bundle_filename": { "type": "string", "minLength": 1 },
+    "bundle_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "bundle_bytes": { "type": "integer", "minimum": 0 },
+    "prompt_id": { "type": "string", "minLength": 1 },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt_bytes": { "type": "integer", "minimum": 0 },
+    "output_contract_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["DRAFT", "FROZEN", "SUPERSEDED"] },
+    "provenance": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

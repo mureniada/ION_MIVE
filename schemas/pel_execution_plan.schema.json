@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_execution_plan.schema.json",
+  "title": "ION PEL ExecutionPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plan_id",
+    "task_id",
+    "conditions",
+    "session_policy",
+    "execution_order",
+    "stop_rule",
+    "gold_access_policy",
+    "status"
+  ],
+  "properties": {
+    "plan_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/execution_condition" }
+    },
+    "session_policy": { "type": "string", "minLength": 1 },
+    "execution_order": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      ]
+    },
+    "stop_rule": { "type": "string", "minLength": 1 },
+    "gold_access_policy": { "enum": ["HIDDEN_UNTIL_FREEZE", "NO_GOLD"] },
+    "status": { "enum": ["DRAFT", "FROZEN", "CLOSED"] }
+  },
+  "$defs": {
+    "execution_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "condition_id",
+        "model_family",
+        "model_identifier",
+        "adapter_id",
+        "adapter_version",
+        "expected_replays",
+        "provider_settings"
+      ],
+      "properties": {
+        "condition_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "minLength": 1 },
+        "model_identifier": { "type": "string", "minLength": 1 },
+        "adapter_id": { "type": "string", "minLength": 1 },
+        "adapter_version": { "type": "string", "minLength": 1 },
+        "expected_replays": { "type": "integer", "minimum": 1 },
+        "provider_settings": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}
