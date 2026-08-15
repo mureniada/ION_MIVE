@@ -18,6 +18,8 @@ import jsonschema
 __all__ = [
     "PELValidationError",
     "validate_execution_plan",
+    "validate_persistence_result",
+    "validate_raw_evidence_artifact",
     "validate_run_record",
     "validate_task_spec",
 ]
@@ -66,3 +68,11 @@ def validate_execution_plan(payload: dict) -> None:
 
 def validate_run_record(payload: dict) -> None:
     _validate(payload, "pel_run_record.schema.json")
+
+
+def validate_raw_evidence_artifact(payload: dict) -> None:
+    _validate(payload, "pel_raw_evidence_artifact.schema.json")
+
+
+def validate_persistence_result(payload: dict) -> None:
+    _validate(payload, "pel_persistence_result.schema.json")

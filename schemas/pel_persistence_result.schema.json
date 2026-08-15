@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_persistence_result.schema.json",
+  "title": "ION PEL PersistenceResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_id",
+    "run_id",
+    "raw_sha256",
+    "raw_bytes",
+    "receipt_sha256",
+    "readback_verified",
+    "status"
+  ],
+  "properties": {
+    "evidence_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "raw_bytes": { "type": "integer", "minimum": 0 },
+    "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "readback_verified": { "type": "boolean" },
+    "status": { "enum": ["PERSISTED_VERIFIED"] }
+  }
+}

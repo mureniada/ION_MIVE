@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_raw_evidence_artifact.schema.json",
+  "title": "ION PEL RawEvidenceArtifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_id",
+    "run_id",
+    "task_sha256",
+    "prompt_sha256",
+    "relative_path",
+    "sha256",
+    "byte_count",
+    "capture_mode",
+    "persisted_at",
+    "status"
+  ],
+  "properties": {
+    "evidence_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "relative_path": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "byte_count": { "type": "integer", "minimum": 0 },
+    "capture_mode": { "type": "string", "minLength": 1 },
+    "persisted_at": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["RAW_FROZEN"] }
+  }
+}
