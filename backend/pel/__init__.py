@@ -46,6 +46,14 @@ from .normalized_readback import read_normalized_judgment
 from .normalized_storage import NormalizedPersistenceError
 from .readback import read_raw_evidence
 from .receipts import build_raw_frozen_run_record
+from .replay_execution_descriptor_models import (
+    ReplayExecutionDescriptor,
+    ReplayExecutionDescriptorPersistenceResult,
+)
+from .replay_execution_identity import REPLAY_EXECUTION_DESCRIPTOR_SCHEMA_ID
+from .replay_execution_persistence import persist_replay_execution_descriptor
+from .replay_execution_readback import read_replay_execution_descriptor
+from .replay_execution_storage import ReplayExecutionDescriptorPersistenceError
 from .storage import EvidencePersistenceError
 from .task_freeze import freeze_task
 from .validation import (
@@ -55,6 +63,8 @@ from .validation import (
     validate_normalized_judgment_v0_2_2,
     validate_persistence_result,
     validate_raw_evidence_artifact,
+    validate_replay_execution_descriptor,
+    validate_replay_execution_descriptor_persistence_result,
     validate_run_record,
     validate_task_spec,
 )
@@ -77,6 +87,10 @@ __all__ = [
     "NormalizedJudgmentArtifact",
     "NormalizedJudgmentPersistenceResult",
     "NormalizedPersistenceError",
+    "REPLAY_EXECUTION_DESCRIPTOR_SCHEMA_ID",
+    "ReplayExecutionDescriptor",
+    "ReplayExecutionDescriptorPersistenceResult",
+    "ReplayExecutionDescriptorPersistenceError",
     "sha256_bytes",
     "is_sha256_hex",
     "require_sha256_hex",
@@ -86,6 +100,8 @@ __all__ = [
     "read_raw_evidence",
     "persist_normalized_judgment",
     "read_normalized_judgment",
+    "persist_replay_execution_descriptor",
+    "read_replay_execution_descriptor",
     "normalize_single_target_checker_output",
     "validate_task_spec",
     "validate_execution_plan",
@@ -95,4 +111,6 @@ __all__ = [
     "validate_normalized_judgment_v0_2_2",
     "validate_normalized_judgment_artifact",
     "validate_normalized_judgment_persistence_result",
+    "validate_replay_execution_descriptor",
+    "validate_replay_execution_descriptor_persistence_result",
 ]

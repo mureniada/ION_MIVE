@@ -23,6 +23,8 @@ __all__ = [
     "validate_normalized_judgment_v0_2_2",
     "validate_persistence_result",
     "validate_raw_evidence_artifact",
+    "validate_replay_execution_descriptor",
+    "validate_replay_execution_descriptor_persistence_result",
     "validate_run_record",
     "validate_task_spec",
 ]
@@ -91,3 +93,11 @@ def validate_normalized_judgment_artifact(payload: dict) -> None:
 
 def validate_normalized_judgment_persistence_result(payload: dict) -> None:
     _validate(payload, "pel_normalized_judgment_persistence_result.schema.json")
+
+
+def validate_replay_execution_descriptor(payload: dict) -> None:
+    _validate(payload, "pel_replay_execution_descriptor_v0_1.schema.json")
+
+
+def validate_replay_execution_descriptor_persistence_result(payload: dict) -> None:
+    _validate(payload, "pel_replay_execution_descriptor_persistence_result.schema.json")

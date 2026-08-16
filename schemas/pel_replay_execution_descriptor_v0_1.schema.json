@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_replay_execution_descriptor_v0_1.schema.json",
+  "title": "ION PEL ReplayExecutionDescriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "descriptor_id",
+    "run_id",
+    "task_sha256",
+    "prompt_sha256",
+    "condition_id",
+    "model_family",
+    "model_identifier",
+    "adapter_id",
+    "adapter_version",
+    "provider_settings",
+    "replay_index",
+    "plan_id",
+    "session_policy",
+    "persisted_at",
+    "status"
+  ],
+  "properties": {
+    "descriptor_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "task_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "condition_id": { "type": "string", "minLength": 1 },
+    "model_family": { "type": "string", "minLength": 1 },
+    "model_identifier": { "type": "string", "minLength": 1 },
+    "adapter_id": { "type": "string", "minLength": 1 },
+    "adapter_version": { "type": "string", "minLength": 1 },
+    "provider_settings": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "replay_index": { "type": "integer", "minimum": 0 },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "session_policy": { "type": "string", "minLength": 1 },
+    "persisted_at": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["EXECUTION_DESCRIPTOR_FROZEN"] }
+  }
+}
