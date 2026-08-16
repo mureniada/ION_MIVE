@@ -18,6 +18,8 @@ import jsonschema
 __all__ = [
     "PELValidationError",
     "validate_execution_plan",
+    "validate_normalized_judgment_artifact",
+    "validate_normalized_judgment_persistence_result",
     "validate_normalized_judgment_v0_2_2",
     "validate_persistence_result",
     "validate_raw_evidence_artifact",
@@ -81,3 +83,11 @@ def validate_persistence_result(payload: dict) -> None:
 
 def validate_normalized_judgment_v0_2_2(payload: dict) -> None:
     _validate(payload, "pel_normalized_judgment_v0_2_2.schema.json")
+
+
+def validate_normalized_judgment_artifact(payload: dict) -> None:
+    _validate(payload, "pel_normalized_judgment_artifact.schema.json")
+
+
+def validate_normalized_judgment_persistence_result(payload: dict) -> None:
+    _validate(payload, "pel_normalized_judgment_persistence_result.schema.json")

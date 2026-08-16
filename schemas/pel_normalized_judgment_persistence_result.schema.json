@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_normalized_judgment_persistence_result.schema.json",
+  "title": "ION PEL NormalizedJudgmentPersistenceResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "normalized_artifact_id",
+    "normalized_content_sha256",
+    "artifact_bytes_sha256",
+    "receipt_sha256",
+    "readback_verified",
+    "status"
+  ],
+  "properties": {
+    "normalized_artifact_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "normalized_content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "artifact_bytes_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "readback_verified": { "type": "boolean" },
+    "status": { "enum": ["NORMALIZED_PERSISTED_VERIFIED"] }
+  }
+}

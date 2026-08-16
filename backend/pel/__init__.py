@@ -36,12 +36,22 @@ from .models import ExecutionCondition, ExecutionPlan, RunRecord, TaskSpec
 from .normalization import normalize_single_target_checker_output
 from .normalization_contract import OUTPUT_CONTRACT_ID, PARSER_ID, PARSER_VERSION
 from .normalization_models import FieldTrace, NormalizedJudgmentV0_2_2, ParserDiagnostic
+from .normalized_identity import NORMALIZED_SCHEMA_ID
+from .normalized_persistence import persist_normalized_judgment
+from .normalized_persistence_models import (
+    NormalizedJudgmentArtifact,
+    NormalizedJudgmentPersistenceResult,
+)
+from .normalized_readback import read_normalized_judgment
+from .normalized_storage import NormalizedPersistenceError
 from .readback import read_raw_evidence
 from .receipts import build_raw_frozen_run_record
 from .storage import EvidencePersistenceError
 from .task_freeze import freeze_task
 from .validation import (
     validate_execution_plan,
+    validate_normalized_judgment_artifact,
+    validate_normalized_judgment_persistence_result,
     validate_normalized_judgment_v0_2_2,
     validate_persistence_result,
     validate_raw_evidence_artifact,
@@ -63,6 +73,10 @@ __all__ = [
     "OUTPUT_CONTRACT_ID",
     "PARSER_ID",
     "PARSER_VERSION",
+    "NORMALIZED_SCHEMA_ID",
+    "NormalizedJudgmentArtifact",
+    "NormalizedJudgmentPersistenceResult",
+    "NormalizedPersistenceError",
     "sha256_bytes",
     "is_sha256_hex",
     "require_sha256_hex",
@@ -70,6 +84,8 @@ __all__ = [
     "build_raw_frozen_run_record",
     "persist_raw_evidence",
     "read_raw_evidence",
+    "persist_normalized_judgment",
+    "read_normalized_judgment",
     "normalize_single_target_checker_output",
     "validate_task_spec",
     "validate_execution_plan",
@@ -77,4 +93,6 @@ __all__ = [
     "validate_raw_evidence_artifact",
     "validate_persistence_result",
     "validate_normalized_judgment_v0_2_2",
+    "validate_normalized_judgment_artifact",
+    "validate_normalized_judgment_persistence_result",
 ]
