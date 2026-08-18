@@ -46,6 +46,16 @@ from .normalized_readback import read_normalized_judgment
 from .normalized_storage import NormalizedPersistenceError
 from .readback import read_raw_evidence
 from .receipts import build_raw_frozen_run_record
+from .replay_comparability_evaluator import evaluate_replay_comparability
+from .replay_comparability_models import (
+    RECORDED_SURFACE_SCOPE_ID,
+    REPLAY_COMPARABILITY_CONTRACT_ID,
+    REPLAY_COMPARABILITY_CONTRACT_VERSION,
+    EvidenceAdmission,
+    ReplayComparabilityAssessmentV0_1,
+    ReplaySetContext,
+    SurfaceFieldFinding,
+)
 from .replay_execution_descriptor_models import (
     ReplayExecutionDescriptor,
     ReplayExecutionDescriptorPersistenceResult,
@@ -63,6 +73,7 @@ from .validation import (
     validate_normalized_judgment_v0_2_2,
     validate_persistence_result,
     validate_raw_evidence_artifact,
+    validate_replay_comparability_assessment_v0_1,
     validate_replay_execution_descriptor,
     validate_replay_execution_descriptor_persistence_result,
     validate_run_record,
@@ -87,6 +98,13 @@ __all__ = [
     "NormalizedJudgmentArtifact",
     "NormalizedJudgmentPersistenceResult",
     "NormalizedPersistenceError",
+    "REPLAY_COMPARABILITY_CONTRACT_ID",
+    "REPLAY_COMPARABILITY_CONTRACT_VERSION",
+    "RECORDED_SURFACE_SCOPE_ID",
+    "EvidenceAdmission",
+    "SurfaceFieldFinding",
+    "ReplaySetContext",
+    "ReplayComparabilityAssessmentV0_1",
     "REPLAY_EXECUTION_DESCRIPTOR_SCHEMA_ID",
     "ReplayExecutionDescriptor",
     "ReplayExecutionDescriptorPersistenceResult",
@@ -102,12 +120,14 @@ __all__ = [
     "read_normalized_judgment",
     "persist_replay_execution_descriptor",
     "read_replay_execution_descriptor",
+    "evaluate_replay_comparability",
     "normalize_single_target_checker_output",
     "validate_task_spec",
     "validate_execution_plan",
     "validate_run_record",
     "validate_raw_evidence_artifact",
     "validate_persistence_result",
+    "validate_replay_comparability_assessment_v0_1",
     "validate_normalized_judgment_v0_2_2",
     "validate_normalized_judgment_artifact",
     "validate_normalized_judgment_persistence_result",

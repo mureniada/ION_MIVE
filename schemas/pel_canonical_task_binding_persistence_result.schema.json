@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_canonical_task_binding_persistence_result.schema.json",
+  "title": "ION PEL CanonicalTaskBinding Persistence Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "binding_id",
+    "binding_bytes_sha256",
+    "readback_verified",
+    "status"
+  ],
+  "properties": {
+    "binding_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "binding_bytes_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "readback_verified": {
+      "const": true
+    },
+    "status": {
+      "const": "CANONICAL_TASK_BINDING_PERSISTED_VERIFIED"
+    }
+  }
+}

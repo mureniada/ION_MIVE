@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_replay_comparability_assessment_v0_1.schema.json",
+  "title": "ION PEL ReplayComparabilityAssessmentV0_1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_id",
+    "contract_version",
+    "surface_scope_id",
+    "evidence_a",
+    "evidence_b",
+    "surface_comparison_started",
+    "surface_field_findings",
+    "surface_result",
+    "lineage_findings",
+    "lineage_result",
+    "replay_set_result",
+    "set_completeness_result",
+    "reason_codes",
+    "context_flags",
+    "full_execution_context_established",
+    "actual_runtime_condition_established",
+    "cross_plan_admission_established",
+    "temporal_comparability_established"
+  ],
+  "properties": {
+    "contract_id": {
+      "const": "ION_PEL_REPLAY_COMPARABILITY_V0_1"
+    },
+    "contract_version": {
+      "const": "0.1"
+    },
+    "surface_scope_id": {
+      "const": "RECORDED_DESCRIPTOR_SURFACE_V0_2"
+    },
+    "evidence_a": {
+      "$ref": "#/$defs/evidence_admission"
+    },
+    "evidence_b": {
+      "$ref": "#/$defs/evidence_admission"
+    },
+    "surface_comparison_started": {
+      "type": "boolean"
+    },
+    "surface_field_findings": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/surface_field_finding"
+      }
+    },
+    "surface_result": {
+      "enum": [
+        "SURFACE_COMPATIBLE",
+        "SURFACE_INCOMPATIBLE",
+        "UNKNOWN"
+      ]
+    },
+    "lineage_findings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "CONDITION_ID_SAME",
+          "CONDITION_ID_DIFFERENT",
+          "PLAN_ID_SAME",
+          "PLAN_ID_DIFFERENT",
+          "REPLAY_INDEX_SAME",
+          "REPLAY_INDEX_DIFFERENT",
+          "REPLAY_SLOT_DUPLICATE_OR_CONFLICT"
+        ]
+      }
+    },
+    "lineage_result": {
+      "enum": [
+        "LINEAGE_COMPATIBLE",
+        "LINEAGE_CONFLICT",
+        "CROSS_PLAN",
+        "CROSS_CONDITION",
+        "UNKNOWN"
+      ]
+    },
+    "replay_set_result": {
+      "enum": [
+        "REPLAY_SET_ADMISSIBLE",
+        "REPLAY_SET_NOT_ADMISSIBLE",
+        "UNKNOWN"
+      ]
+    },
+    "set_completeness_result": {
+      "enum": [
+        "SET_COMPLETE",
+        "SET_INCOMPLETE",
+        "SET_CONFLICTED",
+        "UNKNOWN"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "DESCRIPTOR_INVALID",
+          "DESCRIPTOR_STATUS_INVALID",
+          "DESCRIPTOR_EVIDENCE_UNVERIFIED",
+          "DESCRIPTOR_VERIFICATION_IDENTITY_MISMATCH",
+          "INSUFFICIENT_EVIDENCE",
+          "TASK_HASH_MISMATCH",
+          "PROMPT_HASH_MISMATCH",
+          "MODEL_FAMILY_MISMATCH",
+          "MODEL_IDENTIFIER_MISMATCH",
+          "ADAPTER_ID_MISMATCH",
+          "ADAPTER_VERSION_MISMATCH",
+          "PROVIDER_SETTINGS_MISMATCH",
+          "SESSION_POLICY_MISMATCH",
+          "CROSS_PLAN",
+          "CROSS_CONDITION",
+          "REPLAY_SLOT_DUPLICATE_OR_CONFLICT",
+          "PLAN_CONTEXT_UNAVAILABLE",
+          "CONDITION_CONTEXT_UNAVAILABLE",
+          "EXPECTED_REPLAY_SET_IDENTITY_UNAVAILABLE",
+          "EXPECTED_REPLAYS_UNAVAILABLE",
+          "MISSING_REPLAY_SLOT",
+          "REPLAY_SLOT_CONFLICT",
+          "CANONICAL_TASK_BINDING_UNAVAILABLE",
+          "CANONICAL_TASK_BINDING_UNVERIFIED",
+          "CANONICAL_TASK_BINDING_VERIFICATION_IDENTITY_MISMATCH",
+          "TASK_SPEC_NOT_FROZEN",
+          "EXECUTION_PLAN_TASK_ID_MISMATCH",
+          "CANONICAL_TASK_BINDING_RUN_MISMATCH",
+          "CANONICAL_TASK_BINDING_TASK_ID_MISMATCH",
+          "CANONICAL_TASK_DIGEST_MISMATCH",
+          "CANONICAL_TASK_PROMPT_MISMATCH"
+        ]
+      }
+    },
+    "context_flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "FULL_CONTEXT_NOT_ESTABLISHED",
+          "ACTUAL_RUNTIME_CONDITION_NOT_ESTABLISHED",
+          "TEMPORAL_COMPARABILITY_NOT_ESTABLISHED",
+          "CAPTURE_MODE_RELEVANCE_NOT_ESTABLISHED",
+          "FULL_PLAN_EQUIVALENCE_NOT_ESTABLISHED",
+          "CROSS_PLAN_ADMISSION_NOT_ESTABLISHED"
+        ]
+      }
+    },
+    "full_execution_context_established": {
+      "const": false
+    },
+    "actual_runtime_condition_established": {
+      "const": false
+    },
+    "cross_plan_admission_established": {
+      "const": false
+    },
+    "temporal_comparability_established": {
+      "const": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "surface_comparison_started": {
+            "const": false
+          }
+        },
+        "required": [
+          "surface_comparison_started"
+        ]
+      },
+      "then": {
+        "properties": {
+          "surface_result": {
+            "const": "UNKNOWN"
+          },
+          "surface_field_findings": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "surface_comparison_started": {
+            "const": true
+          }
+        },
+        "required": [
+          "surface_comparison_started"
+        ]
+      },
+      "then": {
+        "properties": {
+          "surface_field_findings": {
+            "minItems": 8,
+            "maxItems": 8
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "evidence_admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "descriptor_id",
+        "run_id",
+        "admission",
+        "verification_basis"
+      ],
+      "properties": {
+        "descriptor_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "admission": {
+          "enum": [
+            "ADMITTED",
+            "UNKNOWN"
+          ]
+        },
+        "verification_basis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "admission": {
+                "const": "ADMITTED"
+              }
+            },
+            "required": [
+              "admission"
+            ]
+          },
+          "then": {
+            "properties": {
+              "descriptor_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "run_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verification_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "surface_field_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "result",
+        "reason_code"
+      ],
+      "properties": {
+        "field": {
+          "enum": [
+            "task_sha256",
+            "prompt_sha256",
+            "model_family",
+            "model_identifier",
+            "adapter_id",
+            "adapter_version",
+            "provider_settings",
+            "session_policy"
+          ]
+        },
+        "result": {
+          "enum": [
+            "SAME",
+            "DIFFERENT",
+            "UNVERIFIED"
+          ]
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "TASK_HASH_MISMATCH",
+                "PROMPT_HASH_MISMATCH",
+                "MODEL_FAMILY_MISMATCH",
+                "MODEL_IDENTIFIER_MISMATCH",
+                "ADAPTER_ID_MISMATCH",
+                "ADAPTER_VERSION_MISMATCH",
+                "PROVIDER_SETTINGS_MISMATCH",
+                "SESSION_POLICY_MISMATCH"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

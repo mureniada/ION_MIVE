@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ion.local/schemas/pel_canonical_task_binding_v0_1.schema.json",
+  "title": "ION PEL CanonicalTaskBinding v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "binding_id",
+    "run_id",
+    "task_id",
+    "canonical_task_sha256",
+    "prompt_sha256",
+    "identity_contract_id",
+    "serialization_profile_id",
+    "status"
+  ],
+  "properties": {
+    "binding_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "canonical_task_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "prompt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identity_contract_id": {
+      "const": "ION_PEL_CANONICAL_TASK_IDENTITY_V0_1"
+    },
+    "serialization_profile_id": {
+      "const": "ION_PEL_CANONICAL_TASK_JSON_V0_1"
+    },
+    "status": {
+      "const": "CANONICAL_TASK_BINDING_FROZEN"
+    }
+  }
+}

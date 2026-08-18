@@ -17,12 +17,15 @@ import jsonschema
 
 __all__ = [
     "PELValidationError",
+    "validate_canonical_task_binding_persistence_result",
+    "validate_canonical_task_binding_v0_1",
     "validate_execution_plan",
     "validate_normalized_judgment_artifact",
     "validate_normalized_judgment_persistence_result",
     "validate_normalized_judgment_v0_2_2",
     "validate_persistence_result",
     "validate_raw_evidence_artifact",
+    "validate_replay_comparability_assessment_v0_1",
     "validate_replay_execution_descriptor",
     "validate_replay_execution_descriptor_persistence_result",
     "validate_run_record",
@@ -67,6 +70,14 @@ def validate_task_spec(payload: dict) -> None:
     _validate(payload, "pel_task_spec.schema.json")
 
 
+def validate_canonical_task_binding_v0_1(payload: dict) -> None:
+    _validate(payload, "pel_canonical_task_binding_v0_1.schema.json")
+
+
+def validate_canonical_task_binding_persistence_result(payload: dict) -> None:
+    _validate(payload, "pel_canonical_task_binding_persistence_result.schema.json")
+
+
 def validate_execution_plan(payload: dict) -> None:
     _validate(payload, "pel_execution_plan.schema.json")
 
@@ -93,6 +104,10 @@ def validate_normalized_judgment_artifact(payload: dict) -> None:
 
 def validate_normalized_judgment_persistence_result(payload: dict) -> None:
     _validate(payload, "pel_normalized_judgment_persistence_result.schema.json")
+
+
+def validate_replay_comparability_assessment_v0_1(payload: dict) -> None:
+    _validate(payload, "pel_replay_comparability_assessment_v0_1.schema.json")
 
 
 def validate_replay_execution_descriptor(payload: dict) -> None:
