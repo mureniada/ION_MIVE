@@ -26,6 +26,29 @@ def point_id_for(document_id: str) -> str:
     return str(uuid.uuid5(_ID_NAMESPACE, str(document_id)))
 
 
+_CANDIDATE_METADATA_KEYS = (
+    "evidence_fingerprint",
+    "evidence_fingerprint_algorithm",
+    "evidence_fingerprint_profile_id",
+    "ion_source_provenance",
+    "ion_canonical_provenance",
+)
+
+_RETRIEVAL_METADATA_KEYS = (
+    "checksum",
+    "ingestion_version",
+) + _CANDIDATE_METADATA_KEYS
+
+
+def _candidate_metadata_payload(document: dict) -> dict:
+    """Copy only pre-activation candidate metadata without reinterpretation."""
+
+    return {
+        key: document[key]
+        for key in _CANDIDATE_METADATA_KEYS
+        if key in document and document[key] is not None
+    }
+
 class QdrantRetrieval:
     def __init__(
         self,
@@ -90,6 +113,7 @@ class QdrantRetrieval:
                         "chunk_id": d.get("chunk_id"),
                         "checksum": d.get("checksum"),
                         "ingestion_version": d.get("ingestion_version"),
+                            **_candidate_metadata_payload(d),
                     },
                 )
             )
@@ -156,7 +180,7 @@ class QdrantRetrieval:
                     chunk_id=p.get("chunk_id"),
                     metadata={
                         k: p.get(k)
-                        for k in ("checksum", "ingestion_version")
+                        for k in _RETRIEVAL_METADATA_KEYS
                         if p.get(k)
                     },
                 )

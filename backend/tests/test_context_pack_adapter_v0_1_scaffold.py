@@ -1,0 +1,25 @@
+"""Test scaffold for ION Context Pack Adapter v0.1.
+
+Executable conformance assertions are intentionally deferred to P5.3-D.
+This file freezes the expected test inventory without claiming test completion.
+"""
+
+EXPECTED_TEST_IDS = (
+    "T01_VALID_CONTEXT_PACK_ACCEPTED",
+    "T02_MISSING_EVIDENCE_ID_REJECTED",
+    "T03_MISSING_FINGERPRINT_REJECTED",
+    "T04_INVALID_PROVENANCE_REJECTED",
+    "T05_UNKNOWN_SCHEMA_VERSION_REJECTED",
+    "T06_EVIDENCE_IDENTITY_PRESERVED",
+    "T07_FINGERPRINT_PRESERVED",
+    "T08_NO_SYNTHETIC_EVIDENCE",
+    "T09_NO_EVIDENCE_REMOVED",
+    "T10_DETERMINISTIC_OUTPUT",
+    "T11_NO_RETRIEVAL_BACKEND_ACCESS",
+    "T12_NO_MODEL_RUNTIME_ACCESS",
+    "T13_NO_CONTEXT_PACK_MUTATION",
+    "T14_NO_PROMOTION_CAPABILITY",
+)
+
+assert len(EXPECTED_TEST_IDS) == 14
+assert len(set(EXPECTED_TEST_IDS)) == 14
