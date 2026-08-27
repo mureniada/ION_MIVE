@@ -124,6 +124,31 @@ class Core:
             )
         )
 
+        # Operational failure is not a governance verdict. B0 let such an
+        # exception propagate untouched, so the captured original is re-raised
+        # as-is; the wrapper below exists only for the unreachable case where an
+        # OPERATIONAL_FAILURE outcome carries no exception to re-raise.
+        if governance.outcome is CoreAdapterOutcomeState.OPERATIONAL_FAILURE:
+            if governance.operational_exception is not None:
+                raise governance.operational_exception
+            raise errors.ContextPackError(
+                "Core Adapter operational failure: "
+                + (governance.operational_error or "")
+            )
+
+        # Governance rejection. Both B0 message contracts are reproduced
+        # verbatim — same prefixes, same "|" join over the bridge reasons — so
+        # the boundary move is invisible to every caller of ask().
+        if governance.outcome is CoreAdapterOutcomeState.GOVERNANCE_REJECTED:
+            if governance.native_gate_error is not None:
+                raise errors.ContextPackError(
+                    "Runtime admission gate rejected: " + governance.native_gate_error
+                )
+            raise errors.ContextPackError(
+                "Runtime evidence bridge rejected: "
+                + "|".join(governance.native_bridge_reasons)
+            )
+
         # --- independent IVE runs (neither sees the other) ---
         gemini_report = self._run_engine(self._gemini, pack, errors.STAGE_GEMINI, emit)
         openai_report = self._run_engine(self._openai, pack, errors.STAGE_OPENAI, emit)

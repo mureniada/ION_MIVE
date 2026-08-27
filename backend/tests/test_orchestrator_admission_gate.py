@@ -1,7 +1,20 @@
+"""B0 governance guarantees, re-expressed at the Core Adapter boundary.
+
+TASK 12.2 moved the ownership of the two governance calls (the runtime evidence
+bridge and the runtime admission gate) out of the orchestrator and behind
+`app.modules.core_adapter`. Nothing about the guarantees themselves changed, so
+every original test id (t27-t38) is preserved here and asserts the same thing it
+asserted in B0 — only the seam it observes has moved.
+
+The migration also took the chance to drop source-text index comparisons in
+favour of observed call order: ordering is now proven by driving the real
+`CoreAdapter` over a stand-in bridge and recording when each stage runs, which
+survives any later reformatting of the modules under test.
+"""
+
 from __future__ import annotations
 
 import hashlib
-import inspect
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +23,8 @@ import pytest
 
 from app.core import errors
 import app.core.orchestrator as orch
+import app.modules.core_adapter.facade as facade
+from app.modules.core_adapter import CoreAdapter
 
 
 REPO_ROOT = Path(os.environ["ION_REPO_ROOT"]).resolve()
@@ -47,9 +62,16 @@ class _Builder:
 
 
 class _Bridge:
-    def __init__(self):
+    """Stands in for the frozen runtime evidence bridge, inside the adapter."""
+
+    backend_id = "TEST-BACKEND"
+    mapping_profile_id = "TEST-PROFILE"
+
+    def __init__(self, *, accepted=True, reasons=()):
         self.resolve_count = 0
         self.build_count = 0
+        self.accepted = accepted
+        self.reasons = reasons
         self.request = SimpleNamespace()
 
     def resolve(self, evidence):
@@ -58,78 +80,122 @@ class _Bridge:
 
     def build_request(self, *args, **kwargs):
         self.build_count += 1
-        return SimpleNamespace(accepted=True, request=self.request, reasons=())
+        return SimpleNamespace(
+            accepted=self.accepted, request=self.request, reasons=self.reasons
+        )
 
 
-def _core():
+def _adapter(bridge):
+    """A real CoreAdapter over a stand-in bridge — the facade logic is genuine."""
+    adapter = CoreAdapter.__new__(CoreAdapter)
+    adapter._bridge = bridge
+    return adapter
+
+
+def _core(bridge=None):
     pack = SimpleNamespace(context_pack_id="CP-001", documents=[])
+    bridge = _Bridge() if bridge is None else bridge
     core = orch.Core.__new__(orch.Core)
     core._settings = SimpleNamespace(default_top_k=1)
     core._clock = _Clock()
     core._retrieval = _Retrieval()
     core._build = _Builder(pack)
-    core._evidence_bridge = _Bridge()
+    core._core_adapter = _adapter(bridge)
     core._gemini = object()
     core._openai = object()
     core._mive = object()
     core._renderer = object()
     core._pricing = object()
-    return core, pack
+    return core, pack, bridge
 
 
-def _source():
-    return inspect.getsource(orch)
+def _patch_gate(monkeypatch, fn):
+    """Patch the admission gate where the Core Adapter now imports it."""
+    monkeypatch.setattr(facade, "run_runtime_admission_gate", fn)
 
 
-def _gate_call_index(source):
-    return source.index("            run_runtime_admission_gate(")
+def _passing_gate(**kwargs):
+    return SimpleNamespace(records=())
 
 
-def test_p5_18ab_t27_admission_gate_executes_after_bridge_acceptance_gate():
-    source = _source()
-    assert source.index("if not bridge_result.accepted:") < _gate_call_index(source)
+def _failing_gate(**kwargs):
+    raise ValueError("blocked")
 
 
-def test_p5_18ab_t28_admission_gate_executes_before_gemini_ive():
-    source = _source()
-    assert _gate_call_index(source) < source.index(
-        "gemini_report = self._run_engine(self._gemini"
-    )
+def test_p5_18ab_t27_admission_gate_executes_after_bridge_acceptance_gate(monkeypatch):
+    gate_calls = []
+
+    def gate(**kwargs):
+        gate_calls.append(kwargs)
+        return _passing_gate(**kwargs)
+
+    _patch_gate(monkeypatch, gate)
+    core, _, bridge = _core(_Bridge(accepted=False, reasons=("R1", "R2")))
+
+    with pytest.raises(errors.ContextPackError) as excinfo:
+        core.ask("Question", top_k=1)
+
+    assert bridge.build_count == 1
+    assert gate_calls == []
+    assert str(excinfo.value) == "Runtime evidence bridge rejected: R1|R2"
 
 
-def test_p5_18ab_t29_admission_gate_executes_before_openai_ive():
-    source = _source()
-    assert _gate_call_index(source) < source.index(
-        "openai_report = self._run_engine(self._openai"
-    )
+def _ordered_run(monkeypatch):
+    """Record the real order of gate and provider execution in one ask()."""
+    order = []
+
+    def gate(**kwargs):
+        order.append("gate")
+        return _passing_gate(**kwargs)
+
+    _patch_gate(monkeypatch, gate)
+    core, _, _ = _core()
+
+    def provider(engine, provider_pack, stage, emit):
+        order.append(stage)
+        if order.count(errors.STAGE_OPENAI) == 1:
+            raise RuntimeError("stop-after-second-provider")
+        return object()
+
+    core._run_engine = provider
+
+    with pytest.raises(RuntimeError, match="stop-after-second-provider"):
+        core.ask("Question", top_k=1)
+
+    return order
+
+
+def test_p5_18ab_t28_admission_gate_executes_before_gemini_ive(monkeypatch):
+    order = _ordered_run(monkeypatch)
+    assert order.index("gate") < order.index(errors.STAGE_GEMINI)
+
+
+def test_p5_18ab_t29_admission_gate_executes_before_openai_ive(monkeypatch):
+    order = _ordered_run(monkeypatch)
+    assert order.index("gate") < order.index(errors.STAGE_OPENAI)
 
 
 def test_p5_18ab_t30_admission_failure_prevents_both_provider_calls(monkeypatch):
-    core, _ = _core()
+    core, _, _ = _core()
     provider_calls = []
-
-    def fail_gate(**kwargs):
-        raise ValueError("blocked")
 
     def provider(*args, **kwargs):
         provider_calls.append(1)
         raise AssertionError("provider must not execute")
 
-    monkeypatch.setattr(orch, "run_runtime_admission_gate", fail_gate)
+    _patch_gate(monkeypatch, _failing_gate)
     core._run_engine = provider
 
-    with pytest.raises(errors.ContextPackError):
+    with pytest.raises(errors.ContextPackError) as excinfo:
         core.ask("Question", top_k=1)
 
     assert provider_calls == []
+    assert str(excinfo.value) == "Runtime admission gate rejected: blocked"
 
 
 def test_p5_18ab_t31_all_pass_gate_permits_both_provider_call_attempts(monkeypatch):
-    core, _ = _core()
+    core, _, _ = _core()
     provider_calls = []
-
-    def pass_gate(**kwargs):
-        return SimpleNamespace()
 
     def provider(engine, pack, stage, emit):
         provider_calls.append((engine, pack, stage))
@@ -137,7 +203,7 @@ def test_p5_18ab_t31_all_pass_gate_permits_both_provider_call_attempts(monkeypat
             raise RuntimeError("stop-after-second-provider")
         return object()
 
-    monkeypatch.setattr(orch, "run_runtime_admission_gate", pass_gate)
+    _patch_gate(monkeypatch, _passing_gate)
     core._run_engine = provider
 
     with pytest.raises(RuntimeError, match="stop-after-second-provider"):
@@ -147,12 +213,12 @@ def test_p5_18ab_t31_all_pass_gate_permits_both_provider_call_attempts(monkeypat
 
 
 def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(monkeypatch):
-    core, pack = _core()
+    core, pack, _ = _core()
     seen = {"gate": None, "providers": []}
 
-    def pass_gate(**kwargs):
+    def gate(**kwargs):
         seen["gate"] = kwargs["pack"]
-        return SimpleNamespace()
+        return _passing_gate(**kwargs)
 
     def provider(engine, provider_pack, stage, emit):
         seen["providers"].append(provider_pack)
@@ -160,7 +226,7 @@ def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(
             raise RuntimeError("stop-after-second-provider")
         return object()
 
-    monkeypatch.setattr(orch, "run_runtime_admission_gate", pass_gate)
+    _patch_gate(monkeypatch, gate)
     core._run_engine = provider
 
     with pytest.raises(RuntimeError):
@@ -172,13 +238,9 @@ def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(
 
 
 def test_p5_18ab_t33_no_second_retrieval_call(monkeypatch):
-    core, _ = _core()
+    core, _, _ = _core()
 
-    monkeypatch.setattr(
-        orch,
-        "run_runtime_admission_gate",
-        lambda **kwargs: (_ for _ in ()).throw(ValueError("stop")),
-    )
+    _patch_gate(monkeypatch, _failing_gate)
 
     with pytest.raises(errors.ContextPackError):
         core.ask("Question", top_k=1)
@@ -187,13 +249,9 @@ def test_p5_18ab_t33_no_second_retrieval_call(monkeypatch):
 
 
 def test_p5_18ab_t34_no_second_context_pack_build(monkeypatch):
-    core, _ = _core()
+    core, _, _ = _core()
 
-    monkeypatch.setattr(
-        orch,
-        "run_runtime_admission_gate",
-        lambda **kwargs: (_ for _ in ()).throw(ValueError("stop")),
-    )
+    _patch_gate(monkeypatch, _failing_gate)
 
     with pytest.raises(errors.ContextPackError):
         core.ask("Question", top_k=1)
@@ -258,3 +316,31 @@ def test_p5_18ab_t38_protected_qdrant_store_remains_byte_identical():
     path = REPO_ROOT / "backend" / "app" / "modules" / "retrieval" / "qdrant_store.py"
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert digest == "c0ddd327914567ecfb5b5b388d55d555b8c513fce58695dea9e9a68356d1dce3"
+
+
+def test_p5_18ab_t39_orchestrator_reaches_governance_only_through_core_adapter():
+    """The direct-import bypass B0 relied on must no longer exist."""
+    for bypassed in (
+        "run_runtime_admission_gate",
+        "build_qdrant_runtime_bridge",
+        "_evidence_bridge",
+    ):
+        assert not hasattr(orch, bypassed)
+        assert not hasattr(orch.Core, bypassed)
+
+
+def test_p5_18ab_t40_operational_failure_propagates_the_original_exception(monkeypatch):
+    """Operational failure is not a governance verdict: B0 raised it untouched."""
+    core, _, _ = _core()
+    boom = RuntimeError("qdrant unreachable")
+
+    def gate(**kwargs):
+        raise boom
+
+    _patch_gate(monkeypatch, gate)
+    core._run_engine = lambda *a, **k: pytest.fail("provider must not execute")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        core.ask("Question", top_k=1)
+
+    assert excinfo.value is boom
