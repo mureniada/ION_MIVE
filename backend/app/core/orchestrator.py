@@ -15,8 +15,12 @@ from typing import Callable
 
 from . import errors
 from .config import Settings
-from ..modules.runtime_evidence_bridge import build_qdrant_runtime_bridge
-from ..modules.admission.claim_adjudication import run_runtime_admission_gate
+from ..modules.core_adapter import (
+    CoreAdapter,
+    CoreAdapterOutcomeState,
+    CoreAdapterRequest,
+    CoreInvocationMode,
+)
 from .models import (
     AskResult,
     Evidence,
@@ -61,7 +65,7 @@ class Core:
         self._pricing = pricing
         self._clock = clock
         self._settings = settings
-        self._evidence_bridge = build_qdrant_runtime_bridge()
+        self._core_adapter = CoreAdapter()
 
     def ask(
         self,
@@ -97,7 +101,6 @@ class Core:
             raise errors.RetrievalError("Retrieval returned no evidence (no silent empty success).")
         retrieval_ms = self._clock.monotonic_ms() - t
         emit("retrieval", "done")
-        provenance_resolutions = self._evidence_bridge.resolve(evidence)
 
         # --- context pack (identical for both providers) ---
         emit("context_pack", "started")
@@ -108,28 +111,18 @@ class Core:
         except Exception as exc:
             raise errors.ContextPackError(f"Context Pack build failed: {exc}") from exc
         emit("context_pack", "done")
-        bridge_result = self._evidence_bridge.build_request(
-            pack,
-            provenance_resolutions,
-            question_id=request_id,
-            adapter_created_at=adapter_created_at,
-        )
-        if not bridge_result.accepted:
-            raise errors.ContextPackError(
-                "Runtime evidence bridge rejected: " + "|".join(bridge_result.reasons)
-            )
 
-        try:
-            run_runtime_admission_gate(
-                evidence=evidence,
-                pack=pack,
+        # --- governance, through the Core Adapter boundary (read-only) ---
+        governance = self._core_adapter.govern(
+            CoreAdapterRequest(
+                candidate_set_id=request_id,
                 question_id=request_id,
-                request=bridge_result.request,
+                candidates=evidence,
+                context_pack=pack,
+                adapter_created_at=adapter_created_at,
+                mode=CoreInvocationMode.READ_ONLY,
             )
-        except ValueError as exc:
-            raise errors.ContextPackError(
-                f"Runtime admission gate rejected: {exc}"
-            ) from exc
+        )
 
         # --- independent IVE runs (neither sees the other) ---
         gemini_report = self._run_engine(self._gemini, pack, errors.STAGE_GEMINI, emit)
