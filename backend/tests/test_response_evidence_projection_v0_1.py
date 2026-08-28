@@ -649,23 +649,62 @@ def test_t17_23_same_input_produces_value_equal_output():
 
 
 # --------------------------------------------------------------------- #
-# T17-24  the module is unwired: nothing existing refers to it
+# T17-24  the module is unwired IN PRODUCTION: no live code refers to it
+#
+# The architectural law this proves is that the Response Evidence contract is
+# not yet wired into the live runtime: no orchestrator, port, adapter,
+# renderer, container or transport path may reach it until wiring is
+# separately authorized. The proof therefore inspects `backend/app/` — the
+# production tree — and fails if any production file outside this module's own
+# package names it.
+#
+# It deliberately does NOT inspect `backend/tests/`. A test importing the
+# public contract is verification, not wiring: it proves nothing runs through
+# the module at runtime, and forbidding it would make this contract untestable
+# by any future Product module or wiring test that must demonstrate real
+# compatibility against it — the same trap the TASK 16 T16-24 proof was
+# narrowed to escape. Narrowing this one preserves the architectural law and
+# drops only the conflation.
 # --------------------------------------------------------------------- #
-def test_t17_24_no_existing_production_or_test_file_references_this_module():
-    this_test = Path(__file__).resolve()
+def test_t17_24_no_production_file_references_this_module():
     module_dir = Path(models.__file__).resolve().parent
+    production_files = sorted((BACKEND_ROOT / "app").rglob("*.py"))
 
-    referring = []
-    for path in sorted((BACKEND_ROOT / "app").rglob("*.py")) + sorted(
-        (BACKEND_ROOT / "tests").glob("*.py")
-    ):
-        resolved = path.resolve()
-        if resolved == this_test or resolved.parent == module_dir:
-            continue
-        if "response_evidence" in resolved.read_text(encoding="utf-8"):
-            referring.append(str(resolved.relative_to(BACKEND_ROOT)))
+    def production_files_containing(token, *, exclude_own_package):
+        """Production files naming `token`, by the same rule under test."""
+        hits = []
+        for path in production_files:
+            resolved = path.resolve()
+            if exclude_own_package and resolved.parent == module_dir:
+                continue
+            if token in resolved.read_text(encoding="utf-8"):
+                hits.append(str(resolved.relative_to(BACKEND_ROOT)))
+        return hits
 
+    # THE LAW: no production file outside the module's own package names it.
+    referring = production_files_containing(
+        "response_evidence", exclude_own_package=True
+    )
     assert referring == [], referring
+
+    # --- the scan is not vacuous ------------------------------------- #
+    # A floor, not a census: this catches a mis-rooted or empty glob without
+    # pinning a brittle exact count that ordinary growth would break.
+    assert len(production_files) >= 20, len(production_files)
+
+    # the token IS detectable in production source, and the ONLY files
+    # carrying it are the module's own package — so the exclusion above is
+    # doing real work rather than hiding an external reference.
+    own = production_files_containing("response_evidence", exclude_own_package=False)
+    assert own, own
+    assert {Path(BACKEND_ROOT / p).resolve().parent for p in own} == {module_dir}
+
+    # an external production reference really would be caught: a control token
+    # that legitimately appears across the production tree is detected by the
+    # exact same predicate, with the same exclusion applied.
+    control = production_files_containing("ContextPack", exclude_own_package=True)
+    assert len(control) > 1, control
+    assert all(not p.startswith("app/modules/response_evidence/") for p in control)
 
 
 # --------------------------------------------------------------------- #
