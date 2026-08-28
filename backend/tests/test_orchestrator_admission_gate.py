@@ -93,7 +93,9 @@ def _adapter(bridge):
 
 
 def _core(bridge=None):
-    pack = SimpleNamespace(context_pack_id="CP-001", documents=[])
+    # `metadata` mirrors the real ContextPack, which always carries one
+    # (core/models.py). Fidelity only — no assertion below depends on it.
+    pack = SimpleNamespace(context_pack_id="CP-001", documents=[], metadata={})
     bridge = _Bridge() if bridge is None else bridge
     core = orch.Core.__new__(orch.Core)
     core._settings = SimpleNamespace(default_top_k=1)
@@ -115,7 +117,10 @@ def _patch_gate(monkeypatch, fn):
 
 
 def _passing_gate(**kwargs):
-    return SimpleNamespace(records=())
+    # `validations` / `transitions` mirror the real RuntimeAdmissionGateResult
+    # (admission/claim_adjudication.py), which always returns all three in
+    # lock-step. Fidelity only — no assertion below depends on them.
+    return SimpleNamespace(records=(), validations=(), transitions=())
 
 
 def _failing_gate(**kwargs):

@@ -21,6 +21,12 @@ from ..modules.core_adapter import (
     CoreAdapterRequest,
     CoreInvocationMode,
 )
+from ..modules.governed_evidence import (
+    GovernedEvidenceMaterializationError,
+    GovernedEvidenceSet,
+    MaterializationInput,
+    materialize_governed_evidence_set,
+)
 from .models import (
     AskResult,
     Evidence,
@@ -149,6 +155,15 @@ class Core:
                 + "|".join(governance.native_bridge_reasons)
             )
 
+        # --- governed evidence gate (fail-closed, before any engine) ---
+        # Reachable ONLY on the GOVERNANCE_COMPLETE fall-through: both branches
+        # above raise first, so no rejected or operationally failed run is ever
+        # materialized. Materializing IS the gate at v0.1 — the set re-establishes
+        # the governed basis of this run from values the Product already holds,
+        # and is deliberately NOT consumed downstream (no engine, MIVE, renderer,
+        # AskResult or model-context use). Wiring it anywhere below is a later task.
+        self._materialize_governed_evidence(governance, evidence, pack, request_id)
+
         # --- independent IVE runs (neither sees the other) ---
         gemini_report = self._run_engine(self._gemini, pack, errors.STAGE_GEMINI, emit)
         openai_report = self._run_engine(self._openai, pack, errors.STAGE_OPENAI, emit)
@@ -210,6 +225,47 @@ class Core:
         )
 
     # ----------------------------------------------------------------- #
+    def _materialize_governed_evidence(
+        self, governance, evidence: list[Evidence], pack, question_id: str
+    ) -> GovernedEvidenceSet:
+        """Materialize the governed basis of one COMPLETED governance run.
+
+        Every value below is one the caller already holds at this point: the
+        outcome the Core Adapter returned, the candidates Product retrieved, and
+        the Context Pack Product built. Nothing is retrieved, recomputed,
+        re-governed or timestamped here, and no Core Adapter or governance
+        internal is reached — the frozen materializer is called exactly as
+        implemented.
+
+        Only `GovernedEvidenceMaterializationError` is caught. An operational
+        fault must still propagate untouched, so no broad `Exception` handler
+        wraps this call. The mapping onto `ContextPackError` is a transport /
+        error-model COMPATIBILITY mapping so the stage vocabulary in docs/15 is
+        unchanged; it does NOT assert that Context Pack construction failed.
+        """
+        try:
+            return materialize_governed_evidence_set(
+                MaterializationInput(
+                    outcome_state=governance.outcome.value,
+                    native_result=governance.native_result,
+                    retrieved_candidate_ids=tuple(e.document_id for e in evidence),
+                    submitted_candidate_ids=tuple(d.document_id for d in pack.documents),
+                    candidate_count=governance.candidate_count,
+                    governed_count=governance.governed_count,
+                    backend_id=governance.backend_id,
+                    mapping_profile_id=governance.mapping_profile_id,
+                    adapter_id=governance.adapter_id,
+                    adapter_version=governance.adapter_version,
+                    context_pack_id=pack.context_pack_id,
+                    question_id=question_id,
+                    context_pack_metadata=pack.metadata,
+                )
+            )
+        except GovernedEvidenceMaterializationError as exc:
+            raise errors.ContextPackError(
+                "Governed evidence materialization failed: " + str(exc)
+            ) from exc
+
     def _run_engine(
         self, engine: IVEPort, pack, stage: str, emit: ProgressCallback
     ) -> IVEReport:
