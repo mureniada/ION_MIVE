@@ -740,23 +740,45 @@ def test_t16_23_same_input_produces_value_equal_output():
 
 
 # --------------------------------------------------------------------- #
-# T16-24  the module is unwired: nothing existing refers to it
+# T16-24  the module is unwired IN PRODUCTION: no live code refers to it
+#
+# The architectural law this proves is that the Model Context contract is not
+# yet wired into the live runtime: no orchestrator, port, adapter, renderer,
+# container or transport path may reach it until wiring is separately
+# authorized. The proof therefore inspects `backend/app/` — the production
+# tree — and fails if any production file outside this module's own package
+# names it.
+#
+# It deliberately does NOT inspect `backend/tests/`. A test importing the
+# public contract is verification, not wiring: it proves nothing runs through
+# the module at runtime, and forbidding it would make the contract untestable
+# by any other Product module that must demonstrate structural compatibility
+# with the real objects (TASK 17's T17-25 does exactly that). The earlier form
+# of this test scanned `tests/` too and so conflated the two; narrowing it
+# preserves the architectural law and drops only the conflation.
 # --------------------------------------------------------------------- #
-def test_t16_24_no_existing_production_or_test_file_references_this_module():
-    this_test = Path(__file__).resolve()
+def test_t16_24_no_production_file_references_this_module():
     module_dir = Path(models.__file__).resolve().parent
 
     referring = []
-    for path in sorted((BACKEND_ROOT / "app").rglob("*.py")) + sorted(
-        (BACKEND_ROOT / "tests").glob("*.py")
-    ):
+    for path in sorted((BACKEND_ROOT / "app").rglob("*.py")):
         resolved = path.resolve()
-        if resolved == this_test or resolved.parent == module_dir:
+        if resolved.parent == module_dir:
             continue
         if "model_context" in resolved.read_text(encoding="utf-8"):
             referring.append(str(resolved.relative_to(BACKEND_ROOT)))
 
     assert referring == [], referring
+
+    # the production tree really was inspected, and really can detect a
+    # reference: a scan that silently matched nothing would prove nothing.
+    production_files = sorted((BACKEND_ROOT / "app").rglob("*.py"))
+    assert len(production_files) > 50, len(production_files)
+    assert any(
+        "model_context" in p.resolve().read_text(encoding="utf-8")
+        for p in production_files
+        if p.resolve().parent == module_dir
+    )
 
 
 # --------------------------------------------------------------------- #

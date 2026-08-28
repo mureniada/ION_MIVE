@@ -8,12 +8,11 @@ frozen Model Context module. Nothing here re-asserts or exercises either. Every
 authorized basis below is a stand-in, so a passing run proves the presentation
 contract, not the exposure or governance ones.
 
-T17-25 exercises the frozen exposure-item SHAPE — every field, type and the
-immutability — rather than the real object the frozen builder returns. The
-stronger real-object form was implemented first and withdrawn; the reason, and
-what is consequently NOT proven, are recorded in full at T17-25 itself. This
-suite therefore proves that a correctly shaped exposure segment is consumed
-without adaptation; it does not prove the live object is.
+The single exception is T17-25, which drives a REAL `ModelContextAssembly`
+built by the frozen TASK 16 builder — and its real `EvidenceContextItem`
+evidence tuple — straight into the projector, to prove the structural input
+contract actually accepts the live objects without adaptation and without
+either production module importing the other.
 
 Absence checks are structural, never textual against source. The module under
 test names the excluded vocabulary — REJECTED / UNKNOWN / NOT_SUBMITTED,
@@ -537,7 +536,7 @@ def test_t17_19_module_has_no_forbidden_dependency():
         for name in (
             "GovernedEvidenceSet", "GovernanceDisposition", "MaterializationInput",
             "materialize_governed_evidence_set", "CoreAdapter",
-            "ModelContextAssembly", "EvidenceContextItem",
+            "ModelContextAssembly", "EvidenceContextItem", "build_model_context",
             "CandidateContentProjection", "ModelContextCoverage",
             "run_runtime_admission_gate", "RuntimeEvidenceBridge",
             "resolve_evidence_provenance", "ContextPack", "ContextDocument",
@@ -670,82 +669,110 @@ def test_t17_24_no_existing_production_or_test_file_references_this_module():
 
 
 # --------------------------------------------------------------------- #
-# T17-25  the frozen exposure-item SHAPE is accepted without adaptation
+# T17-25  the REAL frozen TASK 16 objects are accepted without adaptation
 #
-# LIMIT OF THIS PROOF, stated rather than implied. This drives an
-# EvidenceContextItem-SHAPED basis, not the real frozen object built by the
-# TASK 16 builder. The stronger real-object form was implemented first and
-# withdrawn: the frozen TASK 16 test T16-24 asserts that NO other file under
-# `app/` or `tests/` contains the text of that module's package name, so any
-# file importing it turns T16-24 red. Satisfying T17-25 with the real object
-# therefore requires editing a frozen TASK 16 test, which this task's own
-# requirement forbids in the same sentence ("without changing TASK 16") and
-# which the authorized write surface excludes. The shaped basis is the
-# alternative the requirement names, and it is exercised here at full width:
-# every field, every type in the declared domain, and immutability.
+# This is a contract-compatibility proof, not a shape-similarity one. The
+# basis below is a genuine `ModelContextAssembly` produced by the frozen TASK
+# 16 builder through its public entry point, and its `evidence` tuple —
+# genuine `EvidenceContextItem` objects — is handed to the TASK 17 projector
+# exactly as the builder returned it: no conversion, no repacking, no adapter,
+# no field renaming, no reconstruction. Neither production module imports the
+# other; the join is purely structural, and that is what makes this work.
 #
-# What is NOT proven here, and is deferred to an operator decision: that the
-# object the TASK 16 builder actually returns is accepted verbatim. The shape
-# below is a faithful mirror of the frozen declaration, but it is a mirror.
+# Importing the TASK 16 public contract here is verification, not wiring. The
+# corrected TASK 16 T16-24 proves unwiredness against `backend/app/`, which
+# this test does not touch.
 # --------------------------------------------------------------------- #
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class _FrozenExposureItemShape:
-    """Field-for-field mirror of the frozen Model Context evidence item.
+def test_t17_25_a_real_model_context_assembly_is_accepted_verbatim():
+    """A REAL TASK 16 assembly forms the authorized basis, unmodified."""
+    from app.modules.model_context import (
+        CandidateContentProjection,
+        EvidenceContextItem,
+        ModelContextAssembly,
+        build_model_context,
+    )
 
-    Same names, same declared types, same optional/required split, same
-    immutability. Deliberately no disposition, authority, confidence or score
-    field — the frozen declaration has none either.
-    """
+    admitted = ("EV-1", "EV-2")
+    long_body = "exposed body for EV-1 " + "w" * 300
+    short_body = "short exposed body for EV-2"
+    bodies = {"EV-1": long_body, "EV-2": short_body}
 
-    candidate_id: str
-    content: str
-    title: str
-    source_identity: str
-    page: str | int | None = None
-    chunk_id: str | None = None
-
-
-def test_t17_25_the_frozen_exposure_item_shape_is_accepted_without_adaptation():
-    """Neither module imports the other; the join is purely structural."""
-    exposed = (
-        _FrozenExposureItemShape(
-            candidate_id="EV-1",
-            content="exposed body for EV-1 " + "w" * 300,
-            title="Title EV-1",
-            source_identity="sacred_economics",
-            page=12,
-            chunk_id="EV-1::c1",
+    # a governed basis stand-in: TASK 13 semantics are not under test here,
+    # only the TASK 16 -> TASK 17 contract seam.
+    governed_basis = SimpleNamespace(
+        question_id="Q-1",
+        context_pack_id="cp_abc",
+        admitted=tuple(
+            SimpleNamespace(candidate_id=cid, disposition="ADMITTED")
+            for cid in admitted
         ),
-        _FrozenExposureItemShape(
-            candidate_id="EV-2",
-            content="short exposed body for EV-2",
-            title="Title EV-2",
-            source_identity="sacred_economics",
-            page="xii",
-            chunk_id=None,
+    )
+    projections = (
+        CandidateContentProjection(
+            document_id="EV-1", content=long_body, title="Title EV-1",
+            source_identity="sacred_economics", page=12, chunk_id="EV-1::c1",
+        ),
+        CandidateContentProjection(
+            document_id="EV-2", content=short_body, title="Title EV-2",
+            source_identity="sacred_economics", page="xii", chunk_id=None,
+        ),
+        # submitted but not admitted: legitimate TASK 16 input that never
+        # reaches the assembly, so it is never exposed to a model either
+        CandidateContentProjection(
+            document_id="EV-NOT-ADMITTED", content="never exposed",
+            title="Excluded", source_identity="sacred_economics",
+            page=99, chunk_id="EV-NOT-ADMITTED::c1",
         ),
     )
 
-    # the exposure segment is consumed verbatim, with no adaptation layer
+    assembly = build_model_context(
+        governed_basis=governed_basis,
+        candidate_projections=projections,
+        question="is money credit or debt?",
+    )
+
+    # the real objects, confirmed as such before anything is asserted on them
+    assert isinstance(assembly, ModelContextAssembly)
+    assert assembly.evidence and all(
+        isinstance(item, EvidenceContextItem) for item in assembly.evidence
+    )
+    assert [e.candidate_id for e in assembly.evidence] == ["EV-1", "EV-2"]
+
+    # THE SEAM: the assembly's own evidence tuple, passed straight through.
+    # No conversion, no repacking, no adaptation of any kind.
+    authorized_basis = assembly.evidence
     result = project_response_evidence(
-        authorized_basis=exposed,
+        authorized_basis=authorized_basis,
         reference_requests=[
             _ref("EV-2"),
-            # admitted upstream, but never placed in the exposure segment:
+            # admitted upstream but never placed in the real model context:
             # unresolvable here, and that is the whole contract
-            _ref("EV-ADMITTED-NOT-EXPOSED"),
+            _ref("EV-NOT-ADMITTED"),
             _ref("EV-1"),
         ],
     )
 
+    # identity is preserved exactly, and the request order is honoured
     assert [e.candidate_id for e in result.evidence] == ["EV-2", "EV-1"]
-    assert [u.candidate_id for u in result.unresolved_references] == [
-        "EV-ADMITTED-NOT-EXPOSED"
-    ]
 
-    exposed_by_id = {e.candidate_id: e for e in exposed}
+    # a reference outside the REAL basis resolves ONLY to an unresolved record
+    assert [u.candidate_id for u in result.unresolved_references] == [
+        "EV-NOT-ADMITTED"
+    ]
+    assert result.unresolved_references[0].reason == (
+        UNRESOLVED_REASON_NOT_IN_AUTHORIZED_BASIS
+    )
+    assert "EV-NOT-ADMITTED" not in repr(result.evidence)
+    # ... even though TASK 16 was handed its content: being submitted, or even
+    # admitted, is not being exposed, and only exposure permits presentation
+    assert "never exposed" not in repr(result)
+
+    # every field survives the seam exactly, against the REAL items
+    exposed_by_id = {e.candidate_id: e for e in assembly.evidence}
     for item in result.evidence:
         source = exposed_by_id[item.candidate_id]
+        assert isinstance(source, EvidenceContextItem)
+        assert item.candidate_id == source.candidate_id
         assert item.source_content == source.content
         assert item.title == source.title
         assert item.source_identity == source.source_identity
@@ -753,25 +780,27 @@ def test_t17_25_the_frozen_exposure_item_shape_is_accepted_without_adaptation():
         assert item.chunk_id == source.chunk_id
         assert item.excerpt == source.content[:EXCERPT_PREFIX_CHARS]
         assert item.truncated is (len(source.content) > EXCERPT_PREFIX_CHARS)
+        assert item.source_length == len(source.content)
 
-    # the six declared fields are exactly what the projector reads: an item
-    # carrying only those is sufficient, and one missing any is refused
-    assert _field_names(_FrozenExposureItemShape) == {
-        "candidate_id", "content", "title", "source_identity", "page", "chunk_id",
-    }
-    for omitted in ("content", "title", "source_identity", "page", "chunk_id"):
-        partial = {
-            "candidate_id": "EV-1", "content": "b", "title": "t",
-            "source_identity": "s", "page": 1, "chunk_id": "c",
-        }
-        del partial[omitted]
-        with pytest.raises(ResponseEvidenceProjectionError):
-            project_response_evidence(
-                authorized_basis=[SimpleNamespace(**partial)],
-                reference_requests=[_ref("EV-1")],
-            )
+    # both branches of the excerpt rule are exercised against real content
+    by_id = {e.candidate_id: e for e in result.evidence}
+    assert by_id["EV-1"].truncated is True
+    assert by_id["EV-2"].truncated is False
+    assert by_id["EV-1"].source_content == bodies["EV-1"]
+    assert by_id["EV-2"].source_content == bodies["EV-2"]
+    # the full page/chunk_id domain crossed the seam unconverted
+    assert by_id["EV-1"].page == 12 and by_id["EV-1"].chunk_id == "EV-1::c1"
+    assert by_id["EV-2"].page == "xii" and by_id["EV-2"].chunk_id is None
 
-    # RESPONSE-CITED is a subset of MODEL-CONTEXT-INCLUDED, structurally
+    # RESPONSE-CITED is a subset of the REAL MODEL-CONTEXT-INCLUDED basis
     cited = {e.candidate_id for e in result.evidence}
-    included = {e.candidate_id for e in exposed}
+    included = {e.candidate_id for e in assembly.evidence}
     assert cited <= included
+    assert cited == {"EV-1", "EV-2"}
+
+    # TASK 16 Product code is untouched by the seam: the assembly it returned
+    # is unchanged and still immutable after being consumed.
+    assert assembly.evidence is authorized_basis
+    assert [e.candidate_id for e in assembly.evidence] == ["EV-1", "EV-2"]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        assembly.evidence[0].content = "REWRITTEN BY THE CONSUMER"
