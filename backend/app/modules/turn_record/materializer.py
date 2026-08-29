@@ -18,10 +18,14 @@ records, validations and transitions, the fingerprints and the pack metadata
 are never touched, so no governed evidence can be copied into a Turn Record
 even by accident.
 
-Only COMPLETED is produced here. `TurnClosureState.FAILED` exists in the
-Product vocabulary because the runtime genuinely fails, but live failure
-closure is a later, separately authorized step and has no entry point in this
-module.
+Two entry points, one per closure state, and neither can produce the other's:
+`materialize_turn_record` records a COMPLETED turn and requires every stage
+fact; `materialize_failed_turn_record` records a FAILED turn and requires only
+the facts every started turn is guaranteed to hold — its identity, when it
+started, when it closed, why it failed, and the configuration it ran under.
+Everything else is accepted where it exists and left absent where the stage
+that produces it did not complete. That makes the failure entry point TOTAL
+over the observed failure paths without ever inventing a fact.
 
 Every check below is fail-closed. A violated invariant raises
 `TurnRecordMaterializationError`; none is ever downgraded into a partially
@@ -39,6 +43,7 @@ from .models import (
     ModelExecutionBinding,
     TurnClosureState,
     TurnConfigurationBinding,
+    TurnFailure,
     TurnRecord,
     TurnRecordMaterializationError,
 )
@@ -91,6 +96,60 @@ def _sequence(value: Any, what: str) -> tuple[Any, ...]:
     if isinstance(value, (str, bytes)) or not isinstance(value, (tuple, list)):
         _fail(f"{what} must be supplied as a tuple or list, found {type(value).__name__}")
     return tuple(value)
+
+
+def _optional_text(value: Any, what: str) -> str | None:
+    """A stage-dependent identity: absent, or a non-empty string carried verbatim.
+
+    `None` is the ONLY way to say "not produced". An empty string is refused
+    rather than treated as absence, so a blank value can never stand in for a
+    fact the runtime did not produce.
+    """
+    return None if value is None else _text(value, what)
+
+
+def _optional_duration(value: Any, what: str) -> float | None:
+    """A stage-dependent measurement: absent, or a real, non-negative one.
+
+    NO MEASUREMENT IS NOT ZERO DURATION. `None` means the span was never
+    measured; 0.0 would assert that it was measured and took no time.
+    """
+    return None if value is None else _duration(value, what)
+
+
+def _executions(value: Any) -> tuple[ModelExecutionBinding, ...]:
+    """Validate completed model executions. Emptiness is judged by the caller.
+
+    `model_executions` holds COMPLETED executions only. An execution that
+    failed produced no measurement at all, so a binding for it would be
+    indistinguishable from one that completed without reporting usage; the
+    failing engine is named by the turn's failure stage instead.
+    """
+    executions = _sequence(value, "model executions")
+    seen_engines: set[str] = set()
+    for execution in executions:
+        if not isinstance(execution, ModelExecutionBinding):
+            _fail(
+                "each model execution must be a ModelExecutionBinding, "
+                f"found {type(execution).__name__}"
+            )
+        # A repeated engine identity makes the record ambiguous: two different
+        # executions would answer to one name.
+        if execution.engine_id in seen_engines:
+            _fail(f"duplicate model execution engine identity: {execution.engine_id}")
+        seen_engines.add(execution.engine_id)
+    return executions
+
+
+def _normalized_question(value: Any) -> str:
+    """Verify the declared normalization already holds. Never apply it."""
+    question = _text(value, "question")
+    if question != question.strip():
+        _fail(
+            "question is not normalized as contracted "
+            f"({QUESTION_NORMALIZATION_STRIP}); this contract never normalizes"
+        )
+    return question
 
 
 # --------------------------------------------------------------------------- #
@@ -196,16 +255,7 @@ def materialize_turn_record(
     """
     # --- the turn's own identity and input, carried verbatim -------------- #
     turn_id = _text(turn_id, "turn_id")
-
-    question = _text(question, "question")
-    # Verify the declared normalization already holds. This checks the caller's
-    # contract; it does not APPLY a normalization.
-    if question != question.strip():
-        _fail(
-            "question is not normalized as contracted "
-            f"({QUESTION_NORMALIZATION_STRIP}); this contract never normalizes"
-        )
-
+    question = _normalized_question(question)
     context_pack_id = _text(context_pack_id, "context_pack_id")
 
     # --- the governed basis, by reference --------------------------------- #
@@ -222,24 +272,12 @@ def materialize_turn_record(
         )
 
     # --- the executions that actually ran --------------------------------- #
-    executions = _sequence(model_executions, "model executions")
+    executions = _executions(model_executions)
     if executions == ():
         _fail(
             "a completed turn ran at least one model execution; an empty "
             "execution binding would record a turn that never reasoned"
         )
-    seen_engines: set[str] = set()
-    for execution in executions:
-        if not isinstance(execution, ModelExecutionBinding):
-            _fail(
-                "each model execution must be a ModelExecutionBinding, "
-                f"found {type(execution).__name__}"
-            )
-        # A repeated engine identity makes the record ambiguous: two different
-        # executions would answer to one name.
-        if execution.engine_id in seen_engines:
-            _fail(f"duplicate model execution engine identity: {execution.engine_id}")
-        seen_engines.add(execution.engine_id)
 
     # --- the comparison outcome, carried verbatim ------------------------- #
     # Read as an opaque value. This module owns no comparison vocabulary and
@@ -269,4 +307,99 @@ def materialize_turn_record(
         mive_overall_status=mive_overall_status,
         configuration=configuration,
         failure=None,
+    )
+
+
+def materialize_failed_turn_record(
+    *,
+    turn_id: str,
+    turn_started_at: str,
+    turn_closed_at: str,
+    failure: TurnFailure,
+    configuration: TurnConfigurationBinding,
+    question: str | None = None,
+    context_pack_id: str | None = None,
+    governed_basis: Any | None = None,
+    model_executions: Sequence[ModelExecutionBinding] = (),
+    mive_overall_status: str | None = None,
+    retrieval_latency_ms: float | None = None,
+    comparison_latency_ms: float | None = None,
+    pipeline_latency_ms: float | None = None,
+) -> TurnRecord:
+    """Materialize the record of one FAILED turn.
+
+    TOTAL over the observed failure paths. The five required arguments are the
+    only facts every started turn is guaranteed to hold: its identity, when it
+    started, when it closed, why it failed, and the configuration it ran under.
+    A turn that fails on its very first validation step has all five, so no
+    observed failure is unrecordable.
+
+    Every other argument is a STAGE-DEPENDENT fact. Each is accepted where the
+    stage that produces it completed, and left absent where it did not. Nothing
+    here substitutes a default for a missing fact: a measurement that was never
+    taken stays `None` rather than becoming `0.0`, an identity that was never
+    produced stays `None` rather than becoming `""`, and a governed basis that
+    never existed stays absent rather than being fabricated.
+
+    `model_executions` carries COMPLETED executions only and may be empty — a
+    turn whose first engine failed completed none. The engine that failed is
+    named by `failure.error_stage` where the runtime truthfully has one; it is
+    never given a binding of its own, because a failed attempt produced no
+    measurement and would be indistinguishable from a completed one.
+
+    This function neither takes a timestamp nor decides what failed: like its
+    COMPLETED counterpart it records facts the caller already observed, and it
+    raises `TurnRecordMaterializationError` on every contract violation.
+    """
+    if not isinstance(failure, TurnFailure):
+        _fail(f"failure must be a TurnFailure, found {type(failure).__name__}")
+    if not isinstance(configuration, TurnConfigurationBinding):
+        _fail(
+            "configuration must be a TurnConfigurationBinding, "
+            f"found {type(configuration).__name__}"
+        )
+
+    # --- stage-dependent facts, each accepted only where it exists -------- #
+    context_pack_id = _optional_text(context_pack_id, "context_pack_id")
+
+    governed_evidence = (
+        None if governed_basis is None else _bind_governed_evidence(governed_basis)
+    )
+    if governed_evidence is not None:
+        if context_pack_id is None:
+            _fail(
+                "a governed basis was supplied without a context_pack_id; a "
+                "governed basis always names the Context Pack it governs"
+            )
+        if context_pack_id != governed_evidence.context_pack_id:
+            _fail(
+                f"context_pack_id {context_pack_id!r} does not match the governed "
+                f"basis {governed_evidence.context_pack_id!r}; the turn and its "
+                "governed basis must name one Context Pack"
+            )
+
+    return TurnRecord(
+        turn_id=_text(turn_id, "turn_id"),
+        # This entry point produces FAILED only. It has no parameter through
+        # which a caller could ask for COMPLETED, so a failed turn can never be
+        # recorded as a successful one.
+        closure_state=TurnClosureState.FAILED,
+        turn_started_at=_text(turn_started_at, "turn_started_at"),
+        turn_closed_at=_text(turn_closed_at, "turn_closed_at"),
+        question=None if question is None else _normalized_question(question),
+        retrieval_latency_ms=_optional_duration(
+            retrieval_latency_ms, "retrieval_latency_ms"
+        ),
+        comparison_latency_ms=_optional_duration(
+            comparison_latency_ms, "comparison_latency_ms"
+        ),
+        pipeline_latency_ms=_optional_duration(
+            pipeline_latency_ms, "pipeline_latency_ms"
+        ),
+        context_pack_id=context_pack_id,
+        governed_evidence=governed_evidence,
+        model_executions=_executions(model_executions),
+        mive_overall_status=_optional_text(mive_overall_status, "mive_overall_status"),
+        configuration=configuration,
+        failure=failure,
     )

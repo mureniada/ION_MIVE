@@ -14,10 +14,21 @@ importing the module that defines it, and without duplicating one line of
 governance semantics. A Turn Record references upstream artifacts; it never
 becomes their authority and is never itself evidence.
 
-v0.1 records COMPLETED turns only. The closure vocabulary declares FAILED
-because the runtime genuinely fails, but live failure closure is a later,
-separately authorized step and no entry point here can produce a FAILED record
-from a real turn.
+Every started turn closes with one record, whichever way it ended. There are two
+entry points, one per closure state, and neither can produce the other's:
+`materialize_turn_record` records a COMPLETED turn and requires every stage
+fact, while `materialize_failed_turn_record` records a FAILED turn from the
+facts a started turn is guaranteed to hold, leaving absent whatever the failing
+turn never produced.
+
+One boundary is deliberate and is not a missing branch:
+
+    THE TURN RECORD MECHANISM DOES NOT RECURSIVELY RECORD ITS OWN FAILURE.
+
+If materializing a record fails, no second materialization is attempted for that
+turn, and the original runtime failure propagates unchanged. A recording
+mechanism that recorded its own recording failures could not terminate, and a
+Turn Record must never displace the failure it exists to describe.
 
 A materialized record is an EPHEMERAL RUNTIME VALUE at v0.1: nothing in this
 package writes, logs, serializes or transports it, and no field of it is
@@ -27,6 +38,7 @@ carried into the transport result, the rendered answer or the progress stream.
 from .materializer import (
     TURN_RECORD_MATERIALIZER_ID,
     TURN_RECORD_MATERIALIZER_VERSION,
+    materialize_failed_turn_record,
     materialize_turn_record,
 )
 from .models import (
@@ -57,5 +69,6 @@ __all__ = [
     "TurnFailure",
     "TurnRecord",
     "TurnRecordMaterializationError",
+    "materialize_failed_turn_record",
     "materialize_turn_record",
 ]

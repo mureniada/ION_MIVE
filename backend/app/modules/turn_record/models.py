@@ -83,10 +83,10 @@ class TurnRecordMaterializationError(ValueError):
 class TurnClosureState(str, Enum):
     """How one turn ended. Exactly two states, because the runtime has two.
 
-    COMPLETED and FAILED are both truthful for the observed runtime. At v0.1
-    only COMPLETED is produced by the materializer: live failure closure is a
-    later, separately authorized step, so a FAILED record cannot yet arise from
-    a real turn.
+    COMPLETED and FAILED are both truthful for the observed runtime, and each
+    has its own materializer: `materialize_turn_record` produces COMPLETED and
+    `materialize_failed_turn_record` produces FAILED. Neither can produce the
+    other's state.
 
     There is deliberately no CLARIFY, WAITING_FOR_USER, DIRECT_RESPONSE or
     ABORTED member. Nothing in the current runtime can produce any of them, and
@@ -164,9 +164,14 @@ class TurnConfigurationBinding:
     Provider model names are NOT here. The model a turn actually asked for
     belongs to the execution that asked for it, and lives on
     `ModelExecutionBinding` instead.
+
+    `effective_top_k` is absent only on a FAILED turn that never resolved and
+    accepted one: a value the runtime computed and then REJECTED was never
+    effective, and recording it under this name would misstate it. The other
+    four are truthful bindings on every turn, failed or not.
     """
 
-    effective_top_k: int
+    effective_top_k: int | None = None
     context_char_budget: int
     retrieval_collection: str
     app_version: str
@@ -186,9 +191,13 @@ class TurnFailure:
     is nullable for the same reason and is intended only for already-controlled
     Product text — never a raw provider payload.
 
-    At v0.1 no live turn produces this type: failure closure is deferred. It is
-    declared so the Product vocabulary is complete and so the shape is fixed
-    before it is wired.
+    The v0.1 disclosure policy, applied by the caller: a stage-carrying Product
+    error contributes its own stage and its already-controlled message, both of
+    which the transport layer already surfaces; any other exception contributes
+    its TYPE NAME ONLY, because its text is not currently surfaced and may carry
+    an endpoint, a payload fragment or a credential. A traceback, a repr, a raw
+    provider or store response and a settings value are never recorded, and
+    there is no field for any of them.
     """
 
     error_type: str
@@ -215,21 +224,38 @@ class TurnRecord:
     `pipeline_latency_ms` is named for exactly what the runtime measures: the
     span the Product already times, which ENDS BEFORE RENDERING. It is not an
     end-to-end or total turn latency and must never be read as one.
+
+    Stage-dependent optionality. A FAILED turn may legitimately have produced
+    only some of these facts, so the stage-dependent ones are optional and the
+    rule is exact:
+
+        ABSENCE OF A STAGE-DEPENDENT RUNTIME FACT MEANS THAT FACT WAS NOT
+        PRODUCED, BECAUSE THE STAGE THAT PRODUCES IT DID NOT COMPLETE.
+
+    That reading is unambiguous in this runtime because no stage completes and
+    yields nothing: each produces its value or the turn fails. Optionality here
+    is therefore always about a stage that DID NOT COMPLETE, and never a
+    placeholder for a future architectural layer — those stay structurally
+    absent, with no field at all.
+
+    Success stays strict. `__post_init__` requires every one of these facts on a
+    COMPLETED record, so relaxing the shared type cannot weaken the success
+    contract: a COMPLETED record is exactly as complete as it was before.
     """
 
     turn_id: str
-    question: str
     closure_state: TurnClosureState
     turn_started_at: str
     turn_closed_at: str
-    retrieval_latency_ms: float
-    comparison_latency_ms: float
-    pipeline_latency_ms: float
-    context_pack_id: str
-    governed_evidence: GovernedEvidenceBinding
-    model_executions: tuple[ModelExecutionBinding, ...]
-    mive_overall_status: str
     configuration: TurnConfigurationBinding
+    question: str | None = None
+    retrieval_latency_ms: float | None = None
+    comparison_latency_ms: float | None = None
+    pipeline_latency_ms: float | None = None
+    context_pack_id: str | None = None
+    governed_evidence: GovernedEvidenceBinding | None = None
+    model_executions: tuple[ModelExecutionBinding, ...] = ()
+    mive_overall_status: str | None = None
     failure: TurnFailure | None = None
     turn_identity_basis: str = TURN_IDENTITY_BASIS_REQUEST_ID
     question_normalization: str = QUESTION_NORMALIZATION_STRIP
@@ -256,9 +282,53 @@ class TurnRecord:
                 "a FAILED turn must carry its failure; a bare FAILED record "
                 "would lose the only fact that distinguishes it"
             )
-        if self.context_pack_id != self.governed_evidence.context_pack_id:
-            raise TurnRecordMaterializationError(
-                f"context_pack_id {self.context_pack_id!r} does not match the "
-                f"governed basis {self.governed_evidence.context_pack_id!r}; "
-                "the turn and its governed basis must name one Context Pack"
-            )
+
+        # One turn names one Context Pack. The law is conditional on the
+        # governed basis being present, because a turn can truthfully have built
+        # a Context Pack and then failed BEFORE a governed basis existed — every
+        # failure between pack construction and successful governed-evidence
+        # materialization is exactly that. The converse is not permitted: a
+        # governed basis always names the pack it was built over.
+        if self.governed_evidence is not None:
+            if self.context_pack_id is None:
+                raise TurnRecordMaterializationError(
+                    "a governed basis is present but context_pack_id is absent; "
+                    "a governed basis always names the Context Pack it governs"
+                )
+            if self.context_pack_id != self.governed_evidence.context_pack_id:
+                raise TurnRecordMaterializationError(
+                    f"context_pack_id {self.context_pack_id!r} does not match the "
+                    f"governed basis {self.governed_evidence.context_pack_id!r}; "
+                    "the turn and its governed basis must name one Context Pack"
+                )
+
+        # Success stays strict. Stage-dependent optionality exists for FAILED
+        # turns only: a COMPLETED turn ran every stage, so a COMPLETED record
+        # missing any of their facts would be self-contradictory. Enforcing it
+        # here means relaxing the shared type cannot weaken the success contract
+        # through ANY construction path.
+        if self.closure_state is TurnClosureState.COMPLETED:
+            missing = [
+                name
+                for name in (
+                    "question",
+                    "retrieval_latency_ms",
+                    "comparison_latency_ms",
+                    "pipeline_latency_ms",
+                    "context_pack_id",
+                    "governed_evidence",
+                    "mive_overall_status",
+                )
+                if getattr(self, name) is None
+            ]
+            if self.model_executions == ():
+                missing.append("model_executions")
+            if self.configuration.effective_top_k is None:
+                missing.append("configuration.effective_top_k")
+            if missing:
+                # `missing` is already built in a fixed declaration order, so the
+                # message is deterministic without ordering it here.
+                raise TurnRecordMaterializationError(
+                    "a COMPLETED turn produced every stage fact; this record is "
+                    f"missing {missing}"
+                )

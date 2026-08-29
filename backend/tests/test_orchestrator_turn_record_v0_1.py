@@ -28,7 +28,10 @@ from app.core.models import AskResult
 import app.core.orchestrator as orch
 import app.modules.core_adapter.facade as facade
 from app.modules.core_adapter import CoreAdapter
-from app.modules.governed_evidence import GovernedEvidenceSet
+from app.modules.governed_evidence import (
+    GovernedEvidenceMaterializationError,
+    GovernedEvidenceSet,
+)
 from app.modules.turn_record import TurnClosureState, TurnRecord
 
 VERIFIED = "VERIFIED"
@@ -43,16 +46,20 @@ PASS = "PASS"
 class _Clock:
     """Distinct, ordered values on both channels, so call SITES are provable."""
 
-    def __init__(self):
+    def __init__(self, *, iso_error=None, iso_fails_from=0):
         self.monotonic_calls = 0
         self.iso_calls = 0
         self.iso_log: list[str] = []
+        self.iso_error = iso_error
+        self.iso_fails_from = iso_fails_from
 
     def monotonic_ms(self):
         self.monotonic_calls += 1
         return float(self.monotonic_calls)
 
     def now_iso(self):
+        if self.iso_error is not None and self.iso_calls >= self.iso_fails_from:
+            raise self.iso_error
         value = f"ISO-{self.iso_calls}"
         self.iso_calls += 1
         self.iso_log.append(value)
@@ -60,20 +67,26 @@ class _Clock:
 
 
 class _Retrieval:
-    def __init__(self, candidate_ids):
+    def __init__(self, candidate_ids, *, error=None):
         self._candidate_ids = tuple(candidate_ids)
+        self.error = error
 
     def retrieve(self, question, top_k):
+        if self.error is not None:
+            raise self.error
         return [
             SimpleNamespace(document_id=cid, content="body") for cid in self._candidate_ids
         ]
 
 
 class _Builder:
-    def __init__(self, pack):
+    def __init__(self, pack, *, error=None):
         self.pack = pack
+        self.error = error
 
     def build(self, question, evidence):
+        if self.error is not None:
+            raise self.error
         return self.pack
 
 
@@ -120,12 +133,15 @@ class _Engine:
 
 
 class _Mive:
-    def __init__(self, order=None):
+    def __init__(self, order=None, error=None):
         self.calls = 0
         self._order = order
+        self.error = error
 
     def compare(self, reports):
         self.calls += 1
+        if self.error is not None:
+            raise self.error
         if self._order is not None:
             self._order.append("mive")
         # shaped as the real MIVEResult serializes: to_dict() carries the status
@@ -157,7 +173,12 @@ class _Renderer:
 
 
 class _Pricing:
+    def __init__(self, error=None):
+        self.error = error
+
     def estimate_cost(self, model, input_tokens, output_tokens):
+        if self.error is not None:
+            raise self.error
         return 0.5
 
 
@@ -237,24 +258,26 @@ def _settings():
 
 def _core(
     *, retrieved=("EV-1", "EV-2", "EV-3"), submitted=("EV-1", "EV-2"),
-    bridge=None, order=None, gemini_error=None, renderer_error=None,
+    bridge=None, order=None, gemini_error=None, openai_error=None,
+    renderer_error=None, retrieval_error=None, builder_error=None,
+    mive_error=None, pricing_error=None, clock=None,
 ):
     """A real Core over stand-ins: only the seams are fake, ask() is genuine."""
     pack = _pack(submitted)
-    clock = _Clock()
+    clock = _Clock() if clock is None else clock
     renderer = _Renderer(order=order, clock=clock, error=renderer_error)
 
     core = orch.Core.__new__(orch.Core)
     core._settings = _settings()
     core._clock = clock
-    core._retrieval = _Retrieval(retrieved)
-    core._build = _Builder(pack)
+    core._retrieval = _Retrieval(retrieved, error=retrieval_error)
+    core._build = _Builder(pack, error=builder_error)
     core._core_adapter = _adapter(_Bridge() if bridge is None else bridge)
     core._gemini = _Engine("gemini", "gemini", "gemini-3.1-flash-lite", error=gemini_error)
-    core._openai = _Engine("openai", "openai", "gpt-5.4-mini")
-    core._mive = _Mive(order=order)
+    core._openai = _Engine("openai", "openai", "gpt-5.4-mini", error=openai_error)
+    core._mive = _Mive(order=order, error=mive_error)
     core._renderer = renderer
-    core._pricing = _Pricing()
+    core._pricing = _Pricing(error=pricing_error)
     return core, pack, clock, renderer
 
 
@@ -300,6 +323,30 @@ def _spy_turn_record(monkeypatch, order=None):
 
     monkeypatch.setattr(orch, "materialize_turn_record", spy)
     return inputs, outputs
+
+
+def _spy_failed_turn_record(monkeypatch, *, replacement=None):
+    """Observe the FAILED materializer without replacing what it produces."""
+    inputs, outputs = [], []
+    real = orch.materialize_failed_turn_record
+
+    def spy(**kwargs):
+        inputs.append(kwargs)
+        if replacement is not None:
+            return replacement(**kwargs)
+        produced = real(**kwargs)
+        outputs.append(produced)
+        return produced
+
+    monkeypatch.setattr(orch, "materialize_failed_turn_record", spy)
+    return inputs, outputs
+
+
+def _spy_both(monkeypatch):
+    """Both closure paths at once, so exactly-one can be asserted across them."""
+    completed = _spy_turn_record(monkeypatch)
+    failed = _spy_failed_turn_record(monkeypatch)
+    return completed[1], failed[1]
 
 
 # --------------------------------------------------------------------- #
@@ -356,18 +403,21 @@ def test_t18_r03_r04_record_is_materialized_after_the_gate_and_after_render(monk
     assert order == ["governance", "governed_evidence", "mive", "render", "turn_record"]
 
 
-def test_t18_r04b_a_failing_renderer_produces_no_turn_record(monkeypatch):
+def test_t18_r04b_a_failing_renderer_closes_the_turn_as_failed(monkeypatch):
+    """Superseded TASK 18.2 expectation: this used to assert NO record."""
     boom = RuntimeError("renderer fault")
     core, _, _, _ = _core(renderer_error=boom)
     _patch_gate(monkeypatch, ("EV-1", "EV-2"))
     _spy_governed(monkeypatch)
-    inputs, _ = _spy_turn_record(monkeypatch)
+    completed, failed = _spy_both(monkeypatch)
 
     with pytest.raises(RuntimeError) as excinfo:
         core.ask("Question", top_k=3)
 
-    assert excinfo.value is boom
-    assert inputs == []
+    assert excinfo.value is boom          # the original failure still wins
+    assert completed == []                # never recorded as a success
+    assert len(failed) == 1
+    assert failed[0].closure_state is TurnClosureState.FAILED
 
 
 # --------------------------------------------------------------------- #
@@ -597,40 +647,100 @@ def test_t18_r15_pipeline_latency_is_the_existing_pre_render_span(monkeypatch):
 # T18-R16  no failure path materializes a record at v0.1
 # --------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "make",
+    "make,ask_kwargs",
     [
-        pytest.param(lambda: _core(gemini_error=RuntimeError("gemini 503")), id="provider"),
-        pytest.param(lambda: _core(bridge=_Bridge(accepted=False, reasons=("R1",))), id="rejected"),
+        pytest.param(lambda: _core(), {"question": "   "}, id="F01-empty-question"),
+        pytest.param(lambda: _core(), {"top_k": 0}, id="F02-invalid-top-k"),
+        pytest.param(lambda: _core(), {"top_k": "many"}, id="F02b-non-numeric-top-k"),
+        pytest.param(
+            lambda: _core(retrieval_error=errors.RetrievalError("store down")), {},
+            id="F03-retrieval-ion-error",
+        ),
+        pytest.param(
+            lambda: _core(retrieval_error=RuntimeError("socket reset")), {},
+            id="F04-retrieval-arbitrary",
+        ),
+        pytest.param(lambda: _core(retrieved=()), {}, id="F05-zero-retrieval"),
+        pytest.param(
+            lambda: _core(builder_error=RuntimeError("pack fault")), {},
+            id="F06-context-pack",
+        ),
         pytest.param(
             lambda: _core(bridge=_Bridge(resolve_error=RuntimeError("qdrant unreachable"))),
-            id="operational",
+            {}, id="F07-operational",
         ),
-        pytest.param(lambda: _core(renderer_error=RuntimeError("render fault")), id="renderer"),
+        pytest.param(
+            lambda: _core(bridge=_Bridge(accepted=False, reasons=("R1",))), {},
+            id="F08-governance-rejected",
+        ),
+        pytest.param(
+            lambda: _core(gemini_error=RuntimeError("gemini 503")), {}, id="F10-gemini",
+        ),
+        pytest.param(
+            lambda: _core(openai_error=RuntimeError("openai 503")), {}, id="F11-openai",
+        ),
+        pytest.param(
+            lambda: _core(gemini_error=errors.NormalizationError("bad json")), {},
+            id="F12-normalization",
+        ),
+        pytest.param(lambda: _core(mive_error=RuntimeError("mive fault")), {}, id="F13-mive"),
+        pytest.param(
+            lambda: _core(pricing_error=RuntimeError("pricing fault")), {},
+            id="F14-telemetry",
+        ),
+        pytest.param(
+            lambda: _core(renderer_error=RuntimeError("render fault")), {}, id="F15-renderer",
+        ),
     ],
 )
-def test_t18_r16_no_failed_turn_materializes_a_record(monkeypatch, make):
+def test_t18_r16_every_ordinary_failure_closes_with_exactly_one_failed_record(
+    monkeypatch, make, ask_kwargs
+):
+    """GAP-TURN-CLOSURE-01: every started ordinary turn now closes.
+
+    Supersedes the TASK 18.2 expectation, which asserted no record at all.
+    """
     core, _, _, _ = make()
     _patch_gate(monkeypatch, ("EV-1", "EV-2"))
     _spy_governed(monkeypatch)
-    inputs, outputs = _spy_turn_record(monkeypatch)
+    completed, failed = _spy_both(monkeypatch)
+
+    kwargs = {"question": "Question", "top_k": 3}
+    kwargs.update(ask_kwargs)
 
     with pytest.raises(Exception):
+        core.ask(**kwargs)
+
+    # exactly one record, and it is unambiguously a failure
+    assert completed == [], "a failed turn must never be recorded as COMPLETED"
+    assert len(failed) == 1
+    record = failed[0]
+    assert record.closure_state is TurnClosureState.FAILED
+    assert record.failure is not None
+    assert record.turn_id
+    assert record.turn_started_at and record.turn_closed_at
+
+
+def test_t18_r16b_the_f09_governed_gate_failure_also_closes(monkeypatch):
+    """F09: the governed-evidence gate refuses, so no governed basis exists."""
+    core, _, _, _ = _core()
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+
+    def refuse(source):
+        raise GovernedEvidenceMaterializationError("native record carries no fingerprint")
+
+    monkeypatch.setattr(orch, "materialize_governed_evidence_set", refuse)
+    completed, failed = _spy_both(monkeypatch)
+
+    with pytest.raises(errors.ContextPackError):
         core.ask("Question", top_k=3)
 
-    assert inputs == []
-    assert outputs == []
-
-
-def test_t18_r16b_input_validation_still_fails_before_any_record(monkeypatch):
-    core, _, _, _ = _core()
-    inputs, _ = _spy_turn_record(monkeypatch)
-
-    with pytest.raises(errors.IonError):
-        core.ask("   ", top_k=3)
-    with pytest.raises(errors.IonError):
-        core.ask("Question", top_k=0)
-
-    assert inputs == []
+    assert completed == []
+    assert len(failed) == 1
+    record = failed[0]
+    assert record.governed_evidence is None       # no basis was ever produced
+    assert record.context_pack_id == "CP-001"     # but the pack truthfully existed
+    assert record.model_executions == ()
 
 
 # --------------------------------------------------------------------- #
@@ -669,6 +779,230 @@ def test_t18_r17b_both_governance_rejection_messages_are_unchanged(monkeypatch):
 # --------------------------------------------------------------------- #
 # T18-R18  a refused record does not become a silently successful turn
 # --------------------------------------------------------------------- #
+# --------------------------------------------------------------------- #
+# T18-R19 .. T18-R26  stage truthfulness, masking, recursion, BaseException
+# --------------------------------------------------------------------- #
+def _close(monkeypatch, **core_kwargs):
+    """Drive one failing turn and hand back the FAILED record it produced."""
+    ask_kwargs = core_kwargs.pop("ask_kwargs", {})
+    core, _, _, _ = _core(**core_kwargs)
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+    completed, failed = _spy_both(monkeypatch)
+    kwargs = {"question": "Question", "top_k": 3}
+    kwargs.update(ask_kwargs)
+    with pytest.raises(Exception) as excinfo:
+        core.ask(**kwargs)
+    assert completed == []
+    assert len(failed) == 1
+    return failed[0], excinfo.value
+
+
+def test_t18_r19_f01_records_only_what_a_started_turn_is_guaranteed_to_hold(monkeypatch):
+    record, exc = _close(monkeypatch, ask_kwargs={"question": "   "})
+
+    assert record.question is None                      # never accepted
+    assert record.configuration.effective_top_k is None
+    assert record.retrieval_latency_ms is None
+    assert record.comparison_latency_ms is None
+    assert record.pipeline_latency_ms is None
+    assert record.context_pack_id is None
+    assert record.governed_evidence is None
+    assert record.model_executions == ()
+    assert record.mive_overall_status is None
+    # the failure itself is a Product error, so its stage and controlled text stand
+    assert record.failure.error_stage == errors.STAGE_CONFIGURATION
+    assert record.failure.error_type == "IonError"
+    assert record.failure.error_message == exc.message
+
+
+def test_t18_r20_f02_rejects_top_k_so_none_was_ever_effective(monkeypatch):
+    record, _ = _close(monkeypatch, ask_kwargs={"top_k": 0})
+
+    assert record.question == "Question"                # accepted before top_k
+    assert record.configuration.effective_top_k is None  # computed, then REJECTED
+    assert record.failure.error_stage == errors.STAGE_CONFIGURATION
+
+
+def test_t18_r21_f02b_non_numeric_top_k_has_no_stage_and_no_message(monkeypatch):
+    record, exc = _close(monkeypatch, ask_kwargs={"top_k": "many"})
+
+    assert isinstance(exc, (ValueError, TypeError))
+    assert record.question == "Question"
+    assert record.configuration.effective_top_k is None
+    # not an IonError: no stage is invented, and its text is not disclosed
+    assert record.failure.error_stage is None
+    assert record.failure.error_type == type(exc).__name__
+    assert record.failure.error_message is None
+
+
+def test_t18_r22_f05_records_no_retrieval_span_that_was_never_measured(monkeypatch):
+    record, _ = _close(monkeypatch, retrieved=())
+
+    # the span is measured only AFTER a non-empty result, so it does not exist
+    assert record.retrieval_latency_ms is None          # never 0.0
+    assert record.configuration.effective_top_k == 3
+    assert record.context_pack_id is None
+    assert record.failure.error_stage == errors.STAGE_RETRIEVAL
+
+
+@pytest.mark.parametrize(
+    "core_kwargs,expect_stage",
+    [
+        ({"bridge": _Bridge(resolve_error=RuntimeError("qdrant unreachable"))}, None),
+        ({"bridge": _Bridge(accepted=False, reasons=("R1",))}, errors.STAGE_CONTEXT_PACK),
+    ],
+    ids=["F07-operational", "F08-rejected"],
+)
+def test_t18_r23_f07_f08_have_a_context_pack_but_no_governed_basis(
+    monkeypatch, core_kwargs, expect_stage
+):
+    record, _ = _close(monkeypatch, **core_kwargs)
+
+    assert record.context_pack_id == "CP-001"   # the pack truthfully existed
+    assert record.governed_evidence is None     # governance never completed
+    assert record.model_executions == ()
+    assert record.failure.error_stage == expect_stage
+
+
+def test_t18_r24_f10_has_a_governed_basis_and_no_completed_execution(monkeypatch):
+    record, _ = _close(monkeypatch, gemini_error=RuntimeError("gemini 503"))
+
+    assert record.governed_evidence is not None
+    assert record.governed_evidence.governed_count == 2
+    assert record.model_executions == ()        # the failed attempt has no binding
+    assert record.mive_overall_status is None
+    assert record.failure.error_stage == errors.STAGE_GEMINI
+
+
+def test_t18_r25_f11_binds_only_the_completed_gemini_without_pricing(monkeypatch):
+    record, _ = _close(monkeypatch, openai_error=RuntimeError("openai 503"))
+
+    assert record.governed_evidence is not None
+    assert len(record.model_executions) == 1
+    gemini = record.model_executions[0]
+    assert gemini.engine_id == "gemini"
+    assert gemini.provider == "gemini"
+    assert gemini.requested_model == "gemini-3.1-flash-lite"
+    # observed usage is recorded; cost was never computed and is NOT computed here
+    assert gemini.input_tokens == 11
+    assert gemini.output_tokens == 5
+    assert gemini.latency_ms == 1.5
+    assert gemini.estimated_cost is None
+    # the engine that failed is named by the stage, never by a binding
+    assert record.failure.error_stage == errors.STAGE_OPENAI
+    assert [e.engine_id for e in record.model_executions] == ["gemini"]
+
+
+def test_t18_r26_f13_f14_f15_record_progressively_more(monkeypatch):
+    # F13 — MIVE failed: both engines completed, no comparison outcome
+    record, _ = _close(monkeypatch, mive_error=RuntimeError("mive fault"))
+    assert len(record.model_executions) == 2
+    assert record.mive_overall_status is None
+    assert record.comparison_latency_ms is None
+    assert record.pipeline_latency_ms is None
+    assert record.failure.error_stage == errors.STAGE_MIVE
+
+    # F14 — telemetry failed: the comparison outcome is held, the span is not
+    record, _ = _close(monkeypatch, pricing_error=RuntimeError("pricing fault"))
+    assert record.mive_overall_status == "partial_agreement"
+    assert record.comparison_latency_ms is not None
+    assert record.pipeline_latency_ms is None     # measured after telemetry
+    # both engines DID complete, so both are bound from their observed usage;
+    # pricing never succeeded, so cost is absent rather than computed here
+    assert len(record.model_executions) == 2
+    assert all(e.estimated_cost is None for e in record.model_executions)
+    assert all(e.input_tokens == 11 for e in record.model_executions)
+    assert record.failure.error_stage is None     # unguarded: no stage to claim
+
+    # F15 — renderer failed: everything up to rendering is held
+    record, _ = _close(monkeypatch, renderer_error=RuntimeError("render fault"))
+    assert len(record.model_executions) == 2
+    assert record.mive_overall_status == "partial_agreement"
+    assert record.pipeline_latency_ms is not None
+    assert record.failure.error_stage is None     # no invented stage
+    assert record.failure.error_type == "RuntimeError"
+    assert record.failure.error_message is None
+
+
+def test_t18_r27_a_secondary_recording_failure_never_masks_the_original(monkeypatch):
+    """The backstop: M is suppressed, E propagates, and no retry happens."""
+    # the operational path is where the runtime PINS object identity
+    boom = RuntimeError("qdrant unreachable")
+    core, _, _, _ = _core(bridge=_Bridge(resolve_error=boom))
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+
+    secondary = RuntimeError("the recorder itself is broken")
+
+    def explode(**kwargs):
+        raise secondary
+
+    inputs, _ = _spy_failed_turn_record(monkeypatch, replacement=explode)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        core.ask("Question", top_k=3)
+
+    assert excinfo.value is boom            # the ORIGINAL failure, by identity
+    assert excinfo.value is not secondary
+    assert len(inputs) == 1                 # attempted once, never retried
+
+
+def test_t18_r28_a_clock_that_refuses_during_closure_never_masks_the_original(monkeypatch):
+    """The closing timestamp is inside the backstop (no synthetic timestamp)."""
+    boom = RuntimeError("qdrant unreachable")
+    clock = _Clock(iso_error=RuntimeError("clock unavailable"), iso_fails_from=1)
+    core, _, _, _ = _core(bridge=_Bridge(resolve_error=boom), clock=clock)
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+    _, failed = _spy_both(monkeypatch)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        core.ask("Question", top_k=3)
+
+    assert excinfo.value is boom
+    assert failed == []                     # no record, and no fabricated time
+
+
+def test_t18_r29_a_base_exception_bypasses_the_failure_closure(monkeypatch):
+    """Process control is not an ordinary Product turn failure."""
+    core, _, _, _ = _core(renderer_error=KeyboardInterrupt())
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+    completed, failed = _spy_both(monkeypatch)
+
+    seen = []
+    with pytest.raises(KeyboardInterrupt):
+        core.ask("Question", top_k=3,
+                 progress=lambda stage, status: seen.append((stage, status)))
+
+    assert completed == []
+    assert failed == []                     # not recorded as a failed turn
+    assert ("answer", "ready") not in seen   # and no closure event was emitted
+
+
+def test_t18_r30_a_failed_turn_emits_no_new_progress_event(monkeypatch):
+    core, _, _, _ = _core(mive_error=RuntimeError("mive fault"))
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+    _spy_both(monkeypatch)
+
+    seen = []
+    with pytest.raises(errors.MiveError):
+        core.ask("Question", top_k=3,
+                 progress=lambda stage, status: seen.append((stage, status)))
+
+    # the pre-existing failure stream, unchanged: no closure event, no answer
+    assert seen == [
+        ("retrieval", "started"), ("retrieval", "done"),
+        ("context_pack", "started"), ("context_pack", "done"),
+        (errors.STAGE_GEMINI, "started"), (errors.STAGE_GEMINI, "done"),
+        (errors.STAGE_OPENAI, "started"), (errors.STAGE_OPENAI, "done"),
+        ("mive", "started"),
+    ]
+    assert ("answer", "ready") not in seen
+
+
 def test_t18_r18_a_refused_record_is_not_remapped_into_a_success(monkeypatch):
     from app.modules.turn_record import TurnRecordMaterializationError
 
@@ -689,3 +1023,28 @@ def test_t18_r18_a_refused_record_is_not_remapped_into_a_success(monkeypatch):
     # the refusal propagates untouched: not caught, not remapped onto a core
     # error stage, and never converted into an apparently successful AskResult
     assert excinfo.value is cause
+
+
+def test_t18_r31_f16_does_not_recursively_record_its_own_failure(monkeypatch):
+    """TURN_RECORD_SELF_FAILURE_BOUNDARY — intentional, not a missing branch."""
+    from app.modules.turn_record import TurnRecordMaterializationError
+
+    core, _, _, _ = _core()
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+
+    cause = TurnRecordMaterializationError("turn_id must be a non-empty string")
+
+    def refuse(**kwargs):
+        raise cause
+
+    monkeypatch.setattr(orch, "materialize_turn_record", refuse)
+    failed_inputs, _ = _spy_failed_turn_record(monkeypatch)
+
+    with pytest.raises(TurnRecordMaterializationError) as excinfo:
+        core.ask("Question", top_k=3)
+
+    assert excinfo.value is cause
+    # the attempt guard was already spent by the success path, so the closure
+    # handler makes NO second attempt: the mechanism never records itself
+    assert failed_inputs == []

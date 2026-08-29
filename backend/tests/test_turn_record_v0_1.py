@@ -35,6 +35,7 @@ from app.modules.turn_record import (
     TurnFailure,
     TurnRecord,
     TurnRecordMaterializationError,
+    materialize_failed_turn_record,
     materialize_turn_record,
 )
 
@@ -159,6 +160,34 @@ def _materialize(**overrides):
     )
     kwargs.update(overrides)
     return materialize_turn_record(**kwargs)
+
+
+def _bare_configuration():
+    """The configuration a turn that failed before resolving top_k still has."""
+    return TurnConfigurationBinding(
+        effective_top_k=None,
+        context_char_budget=60000,
+        retrieval_collection="ion_corpus_v1",
+        app_version="0.1.0",
+        pricing_as_of="2026-07-13",
+    )
+
+
+def _failed(**overrides):
+    """The MINIMUM truthful failed record: only guaranteed facts supplied."""
+    kwargs = dict(
+        turn_id="TURN-1",
+        turn_started_at="2026-08-29T00:00:00+00:00",
+        turn_closed_at="2026-08-29T00:00:04+00:00",
+        failure=TurnFailure(
+            error_type="IonError",
+            error_stage="configuration",
+            error_message="Question must be a non-empty string.",
+        ),
+        configuration=_bare_configuration(),
+    )
+    kwargs.update(overrides)
+    return materialize_failed_turn_record(**kwargs)
 
 
 def _field_names(cls):
@@ -677,6 +706,7 @@ def test_t18_21_public_exports_are_exact_and_closed():
         "TurnFailure",
         "TurnRecord",
         "TurnRecordMaterializationError",
+        "materialize_failed_turn_record",
         "materialize_turn_record",
     }
     assert len(turn_record.__all__) == len(set(turn_record.__all__))
@@ -700,11 +730,189 @@ def test_t18_22_no_runtime_provider_or_transport_name_is_reachable():
 
 
 # --------------------------------------------------------------------- #
-# T18-23  the deferred later layers are not named in production source
+# T18-24 .. T18-31  the FAILED closure contract
 #
-# The frozen production-unwired proofs detect any production file naming those
-# layers. This asserts the same law from the TASK 18 side, so a future edit to
-# this package cannot break those proofs silently.
+# A started turn that fails must still close with one truthful record. These
+# prove the failure entry point is TOTAL over the facts a started turn is
+# guaranteed to hold, that every stage-dependent fact is accepted only where it
+# exists, and that relaxing the shared type did not weaken the COMPLETED
+# contract by one field.
+# --------------------------------------------------------------------- #
+def test_t18_24_failed_record_needs_only_the_facts_every_started_turn_holds():
+    """TOTALITY: the earliest possible failure is still recordable.
+
+    F01 shape — a turn that failed on its very first validation step produced
+    no question, no effective top_k, no retrieval, no Context Pack, no governed
+    basis, no execution, no comparison and no measurement.
+    """
+    record = _failed()
+
+    assert record.closure_state is TurnClosureState.FAILED
+    assert record.failure is not None
+    assert record.turn_id == "TURN-1"
+    assert record.turn_started_at == "2026-08-29T00:00:00+00:00"
+    assert record.turn_closed_at == "2026-08-29T00:00:04+00:00"
+
+    # every stage-dependent fact is ABSENT, and absence is None/() — never a
+    # blank string and never a zero measurement
+    assert record.question is None
+    assert record.configuration.effective_top_k is None
+    assert record.retrieval_latency_ms is None
+    assert record.comparison_latency_ms is None
+    assert record.pipeline_latency_ms is None
+    assert record.context_pack_id is None
+    assert record.governed_evidence is None
+    assert record.model_executions == ()
+    assert record.mive_overall_status is None
+
+    # the four configuration values that are true of any started turn remain
+    assert record.configuration.context_char_budget == 60000
+    assert record.configuration.retrieval_collection == "ion_corpus_v1"
+    assert record.configuration.app_version == "0.1.0"
+    assert record.configuration.pricing_as_of == "2026-07-13"
+
+    # the contract literals are the same ones a COMPLETED record carries
+    assert record.turn_record_contract_id == TURN_RECORD_CONTRACT_ID
+    assert record.turn_identity_basis == TURN_IDENTITY_BASIS_REQUEST_ID
+    assert record.question_normalization == QUESTION_NORMALIZATION_STRIP
+
+
+def test_t18_25_the_failure_materializer_produces_failed_only():
+    import inspect
+
+    parameters = inspect.signature(materialize_failed_turn_record).parameters
+    assert "closure_state" not in parameters
+    # the five facts every started turn is guaranteed to hold are required;
+    # every stage-dependent one defaults to absent
+    required = {
+        name for name, p in parameters.items() if p.default is inspect.Parameter.empty
+    }
+    assert required == {
+        "turn_id",
+        "turn_started_at",
+        "turn_closed_at",
+        "failure",
+        "configuration",
+    }
+    assert _failed().closure_state is TurnClosureState.FAILED
+
+
+def test_t18_26_failed_record_refuses_a_malformed_or_absent_guaranteed_fact():
+    for field in ("turn_id", "turn_started_at", "turn_closed_at"):
+        for refused in ("", None, 7):
+            with pytest.raises(TurnRecordMaterializationError):
+                _failed(**{field: refused})
+
+    for refused in (None, "boom", SimpleNamespace(error_type="X")):
+        with pytest.raises(TurnRecordMaterializationError):
+            _failed(failure=refused)
+    with pytest.raises(TurnRecordMaterializationError):
+        _failed(configuration=SimpleNamespace(effective_top_k=None))
+
+
+def test_t18_27_failed_record_accepts_stage_facts_where_they_exist():
+    """A late failure holds almost everything; only what MIVE would have made is absent."""
+    ges = _real_governed_evidence_set()
+    record = _failed(
+        question="is money credit or debt?",
+        configuration=_configuration(),
+        context_pack_id="CP-001",
+        governed_basis=ges,
+        model_executions=(_execution(), _execution("openai", "openai", "gpt-5.4-mini")),
+        retrieval_latency_ms=120.5,
+        failure=TurnFailure(
+            error_type="MiveError", error_stage="mive",
+            error_message="MIVE comparison failed",
+        ),
+    )
+
+    assert record.closure_state is TurnClosureState.FAILED
+    assert record.question == "is money credit or debt?"
+    assert record.configuration.effective_top_k == 5
+    assert record.context_pack_id == "CP-001"
+    assert record.governed_evidence is not None
+    assert record.governed_evidence.question_id == ges.question_id
+    assert [e.engine_id for e in record.model_executions] == ["gemini", "openai"]
+    assert record.retrieval_latency_ms == 120.5
+    # MIVE never completed, so neither its status nor its span exists
+    assert record.mive_overall_status is None
+    assert record.comparison_latency_ms is None
+    assert record.pipeline_latency_ms is None
+
+
+def test_t18_28_failed_record_never_fabricates_absence_as_a_value():
+    # a blank identity is refused rather than accepted as "not produced"
+    for blank_field in ("question", "context_pack_id", "mive_overall_status"):
+        with pytest.raises(TurnRecordMaterializationError):
+            _failed(**{blank_field: ""})
+    # an unnormalized question is still refused, never silently normalized
+    with pytest.raises(TurnRecordMaterializationError):
+        _failed(question="  padded  ")
+    # ZERO DURATION IS NOT NO MEASUREMENT: a negative or non-real span is
+    # refused, and 0.0 is a real measurement that stays distinct from None
+    for field in (
+        "retrieval_latency_ms", "comparison_latency_ms", "pipeline_latency_ms",
+    ):
+        with pytest.raises(TurnRecordMaterializationError):
+            _failed(**{field: -1.0})
+        with pytest.raises(TurnRecordMaterializationError):
+            _failed(**{field: "120"})
+        assert getattr(_failed(**{field: 0.0}), field) == 0.0
+        assert getattr(_failed(), field) is None
+
+
+def test_t18_29_a_governed_basis_always_names_its_context_pack():
+    ges = _real_governed_evidence_set()
+    # present basis + absent pack identity is refused
+    with pytest.raises(TurnRecordMaterializationError):
+        _failed(governed_basis=ges, context_pack_id=None)
+    # present basis + disagreeing pack identity is refused
+    with pytest.raises(TurnRecordMaterializationError):
+        _failed(governed_basis=ges, context_pack_id="CP-OTHER")
+    # the converse is legitimate: a pack can exist before any governed basis,
+    # which is exactly every failure between pack build and the governed gate
+    record = _failed(context_pack_id="CP-001", governed_basis=None)
+    assert record.context_pack_id == "CP-001"
+    assert record.governed_evidence is None
+
+
+def test_t18_30_success_stays_strict_under_the_relaxed_shared_type():
+    """Optionality serves FAILED turns; it must not weaken COMPLETED ones."""
+    completed = _materialize()
+    for absent in (
+        {"question": None},
+        {"retrieval_latency_ms": None},
+        {"comparison_latency_ms": None},
+        {"pipeline_latency_ms": None},
+        {"context_pack_id": None, "governed_evidence": None},
+        {"governed_evidence": None},
+        {"model_executions": ()},
+        {"mive_overall_status": None},
+        {"configuration": TurnConfigurationBinding(
+            effective_top_k=None, context_char_budget=60000,
+            retrieval_collection="c", app_version="0.1.0", pricing_as_of="d",
+        )},
+    ):
+        with pytest.raises(TurnRecordMaterializationError):
+            dataclasses.replace(completed, **absent)
+
+    # the same absences are lawful on a FAILED record
+    assert _failed().question is None
+
+
+def test_t18_31_no_failed_attempt_or_outcome_field_exists():
+    """A failed model attempt has no binding, and none can be added by value."""
+    names = _all_field_names()
+    for absent in (
+        "outcome", "status", "succeeded", "failed", "attempted", "attempt",
+        "attempts", "failed_executions", "attempted_executions", "error",
+    ):
+        assert absent not in names, absent
+    assert not hasattr(_execution(), "outcome")
+
+
+# --------------------------------------------------------------------- #
+# T18-23  the deferred later layers are not named in production source
 # --------------------------------------------------------------------- #
 def test_t18_23_production_source_names_no_deferred_layer():
     deferred = ("model" + "_context", "response" + "_evidence")
