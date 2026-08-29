@@ -15,6 +15,7 @@ from typing import Callable
 
 from . import errors
 from .config import Settings
+from .. import __version__ as APP_VERSION
 from ..modules.core_adapter import (
     CoreAdapter,
     CoreAdapterOutcomeState,
@@ -26,6 +27,13 @@ from ..modules.governed_evidence import (
     GovernedEvidenceSet,
     MaterializationInput,
     materialize_governed_evidence_set,
+)
+from ..modules.telemetry.pricing import PRICING_AS_OF
+from ..modules.turn_record import (
+    ModelExecutionBinding,
+    TurnConfigurationBinding,
+    TurnRecord,
+    materialize_turn_record,
 )
 from .models import (
     AskResult,
@@ -159,10 +167,14 @@ class Core:
         # Reachable ONLY on the GOVERNANCE_COMPLETE fall-through: both branches
         # above raise first, so no rejected or operationally failed run is ever
         # materialized. Materializing IS the gate at v0.1 — the set re-establishes
-        # the governed basis of this run from values the Product already holds,
-        # and is deliberately NOT consumed downstream (no engine, MIVE, renderer,
-        # AskResult or model-context use). Wiring it anywhere below is a later task.
-        self._materialize_governed_evidence(governance, evidence, pack, request_id)
+        # the governed basis of this run from values the Product already holds.
+        # The gate itself is unchanged: same call, same position, same exceptions.
+        # Its result is now CAPTURED rather than discarded, so the Turn Record can
+        # bind the governed basis BY REFERENCE at the end of the turn. It is still
+        # not consumed by any engine, by MIVE, by the renderer or by AskResult.
+        governed_evidence = self._materialize_governed_evidence(
+            governance, evidence, pack, request_id
+        )
 
         # --- independent IVE runs (neither sees the other) ---
         gemini_report = self._run_engine(self._gemini, pack, errors.STAGE_GEMINI, emit)
@@ -212,6 +224,38 @@ class Core:
             evidence=evidence,
             metrics_dict=metrics.to_dict(),
         )
+        mive_dict = mive_result.to_dict()
+
+        # --- turn closure: exactly one immutable Turn Record ---
+        # Reached only after the renderer completed, so the record states a turn
+        # that genuinely produced an answer. The closing timestamp comes from the
+        # already-injected clock — the Turn Record contract owns none.
+        #
+        # It is materialized BEFORE the final progress event so that a refusal
+        # here cannot leave a stream that announced a ready answer and then
+        # failed. The emitted success sequence is unchanged either way.
+        #
+        # The record is EPHEMERAL at v0.1 (D18-06): held as a local value only.
+        # It is deliberately not returned, not placed in AskResult, not rendered,
+        # not emitted, not logged and not persisted. Exposing it anywhere is a
+        # later, separately authorized task.
+        turn_closed_at = self._clock.now_iso()
+        turn_record = self._materialize_turn_record(  # noqa: F841 - see above
+            turn_id=request_id,
+            question=q,
+            governed_basis=governed_evidence,
+            pack=pack,
+            reports=(gemini_report, openai_report),
+            provider_metrics=provider_metrics,
+            mive_overall_status=mive_dict["overall_status"],
+            effective_top_k=k,
+            turn_started_at=adapter_created_at,
+            turn_closed_at=turn_closed_at,
+            retrieval_latency_ms=retrieval_ms,
+            comparison_latency_ms=comparison_ms,
+            pipeline_latency_ms=total_ms,
+        )
+
         emit("answer", "ready")
 
         return AskResult(
@@ -219,7 +263,7 @@ class Core:
             question=q,
             status="success",
             rendered=rendered,
-            mive_result=mive_result.to_dict(),
+            mive_result=mive_dict,
             ive_reports=[gemini_report.to_contract_dict(), openai_report.to_contract_dict()],
             metrics=metrics.to_dict(),
         )
@@ -265,6 +309,81 @@ class Core:
             raise errors.ContextPackError(
                 "Governed evidence materialization failed: " + str(exc)
             ) from exc
+
+    def _materialize_turn_record(
+        self,
+        *,
+        turn_id: str,
+        question: str,
+        governed_basis: GovernedEvidenceSet,
+        pack,
+        reports: tuple[IVEReport, ...],
+        provider_metrics: list[ProviderMetrics],
+        mive_overall_status: str,
+        effective_top_k: int,
+        turn_started_at: str,
+        turn_closed_at: str,
+        retrieval_latency_ms: float,
+        comparison_latency_ms: float,
+        pipeline_latency_ms: float,
+    ) -> TurnRecord:
+        """Record the closure of one COMPLETED turn.
+
+        Every value below is one the caller already holds at this point. Nothing
+        is retrieved, recomputed, re-governed, re-compared or timestamped here:
+        the closing timestamp arrives as an argument, and the frozen Turn Record
+        materializer is called exactly as implemented.
+
+        The governed basis is passed through so the record can bind it BY
+        REFERENCE. The materializer reads only its identity, binding and counts;
+        no admitted entry, native object or evidence content is reachable from
+        the record it returns.
+
+        Model execution figures are taken from the ProviderMetrics this turn
+        already produced, so the record cannot disagree with the Product's own
+        telemetry for the same turn. `engine_id` comes from the report, which is
+        the only object carrying it. `report.model` is the model the Product
+        REQUESTED; the provider-reported identity is discarded upstream and is
+        therefore never claimed.
+
+        No exception is caught here. A refusal must not be remapped into an
+        apparently successful turn, and turning one into a recorded failure is a
+        later, separately authorized step.
+        """
+        executions = tuple(
+            ModelExecutionBinding(
+                engine_id=report.engine_id,
+                provider=metrics.provider,
+                requested_model=metrics.model,
+                input_tokens=metrics.input_tokens,
+                output_tokens=metrics.output_tokens,
+                latency_ms=metrics.latency_ms,
+                usage_is_estimated=metrics.usage_is_estimated,
+                estimated_cost=metrics.estimated_cost,
+            )
+            for report, metrics in zip(reports, provider_metrics, strict=True)
+        )
+
+        return materialize_turn_record(
+            turn_id=turn_id,
+            question=question,
+            governed_basis=governed_basis,
+            context_pack_id=pack.context_pack_id,
+            model_executions=executions,
+            mive_overall_status=mive_overall_status,
+            configuration=TurnConfigurationBinding(
+                effective_top_k=effective_top_k,
+                context_char_budget=self._settings.context_char_budget,
+                retrieval_collection=self._settings.qdrant_collection,
+                app_version=APP_VERSION,
+                pricing_as_of=PRICING_AS_OF,
+            ),
+            turn_started_at=turn_started_at,
+            turn_closed_at=turn_closed_at,
+            retrieval_latency_ms=retrieval_latency_ms,
+            comparison_latency_ms=comparison_latency_ms,
+            pipeline_latency_ms=pipeline_latency_ms,
+        )
 
     def _run_engine(
         self, engine: IVEPort, pack, stage: str, emit: ProgressCallback

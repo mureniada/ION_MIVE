@@ -136,7 +136,10 @@ class _Pricing:
 
 
 def _report(provider):
+    # `engine_id` mirrors the real IVEReport, which always carries one
+    # (core/models.py). Fidelity only — no assertion below depends on it.
     return SimpleNamespace(
+        engine_id=provider,
         provider=provider,
         model=provider + "-model",
         usage=SimpleNamespace(
@@ -214,7 +217,14 @@ def _core(*, retrieved=("EV-1",), submitted=None, bridge=None):
     submitted = retrieved if submitted is None else submitted
     pack = _pack(submitted)
     core = orch.Core.__new__(orch.Core)
-    core._settings = SimpleNamespace(default_top_k=1)
+    # `context_char_budget` / `qdrant_collection` mirror the real Settings,
+    # which always carries both (core/config.py). Fidelity only — no assertion
+    # below depends on either.
+    core._settings = SimpleNamespace(
+        default_top_k=1,
+        context_char_budget=60000,
+        qdrant_collection="ion_corpus_v1",
+    )
     core._clock = _Clock()
     core._retrieval = _Retrieval(retrieved)
     core._build = _Builder(pack)
