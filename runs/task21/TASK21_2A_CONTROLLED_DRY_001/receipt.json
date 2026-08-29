@@ -1,0 +1,100 @@
+{
+  "admitted_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "ask_result_status": "success",
+  "controlled_engine_execution_count": 1,
+  "engine_ids": [
+    "gemini"
+  ],
+  "executed_at_utc": "2026-08-29T23:47:01Z",
+  "execution_mode": "SINGLE",
+  "execution_profile_id": "STANDARD_GEMINI",
+  "execution_profile_version": "0.1",
+  "mive_execution_count": 0,
+  "model_context_evidence_ids": [
+    "readme::pall::c0"
+  ],
+  "openai_execution_count": 0,
+  "provider_execution": "CONTROLLED_FAKE",
+  "question": "Where should operator-approved source documents be placed?",
+  "real_gemini_executed": false,
+  "receipt_schema_id": "ION_TASK21_CONTROLLED_DRY_RECEIPT_V0_1",
+  "rendered_evidence_ids": [
+    "readme::pall::c0"
+  ],
+  "rendered_response": {
+    "disclaimer": "This response was produced by a single configured model execution (gemini). No second, independent model interpretation was run for this turn, so no cross-model agreement, disagreement, or consensus claim applies.",
+    "evidence": [
+      {
+        "chunk_id": "readme::pall::c0",
+        "claim_linkage": "Operator-approved source documents should be placed under corpus/source/, per the admitted controlled evidence.",
+        "document_id": "readme::pall::c0",
+        "excerpt": "# Corpus Placement Place the operator-approved source documents under: `corpus/source/` Do not include application code here. Recommended ingestion metadata: - source ID; - title; - author; - edition/date; - file name; - page or location; -",
+        "page": null,
+        "source": "readme",
+        "title": "README"
+      }
+    ],
+    "mive_assessment": null,
+    "operational_metrics": {
+      "comparison_latency_ms": null,
+      "context_characters": 427,
+      "context_documents": 1,
+      "error_stage": null,
+      "providers": [
+        {
+          "estimated_cost": null,
+          "input_tokens": null,
+          "latency_ms": 0.004,
+          "model": "task21-controlled-deterministic-engine-v0-1",
+          "output_tokens": null,
+          "provider": "CONTROLLED_FAKE",
+          "usage_is_estimated": true
+        }
+      ],
+      "question": "Where should operator-approved source documents be placed?",
+      "request_id": "69f95e0498b24fa8bac22fe3ef0a33e5",
+      "retrieval_latency_ms": 0.107,
+      "retrieved_chunks": 1,
+      "status": "success",
+      "timestamp": "2026-08-29T23:47:01.769679+00:00",
+      "total_estimated_cost": null,
+      "total_latency_ms": 5.367
+    },
+    "primary_answer": "Operator-approved source documents should be placed under corpus/source/, per the admitted controlled evidence.",
+    "question": "Where should operator-approved source documents be placed?",
+    "uncertainty": {
+      "reported": [
+        "This report was produced by a controlled, non-Gemini deterministic engine for TASK 21.2A only."
+      ]
+    }
+  },
+  "rendered_response_sha256": "768b854bd3cc30b69baa09050cec5e5fd18accb0ac9407b5802025d002c4e6c4",
+  "repository_head": "e707faf6454929a0f6c70e930f29d81c8659fab7",
+  "retrieved_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "run_id": "task21-controlled-dry-2026-08-29T234701Z",
+  "run_mode": "CONTROLLED_DRY",
+  "source_path": "corpus/README.md",
+  "source_sha256": "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e8609cc03fa1ee",
+  "submitted_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "subset_checks": {
+    "admitted_subset_of_submitted": true,
+    "model_context_subset_of_admitted": true,
+    "rendered_subset_of_model_context": true,
+    "submitted_subset_of_retrieved": true
+  },
+  "turn_record": {
+    "closure_state": "COMPLETED",
+    "comparison_latency_ms": null,
+    "engine_ids": [
+      "gemini"
+    ],
+    "mive_overall_status": null,
+    "model_execution_count": 1
+  }
+}
