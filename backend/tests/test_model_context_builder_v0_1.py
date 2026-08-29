@@ -899,15 +899,124 @@ def test_t16_24_model_context_is_wired_only_through_the_authorized_product_path(
     assert len(control) > 1, control
 
     # (E) if build_model_context raises, no Gateway/provider/MIVE execution
-    # occurs. Proven at the unit level too (T19-3-06..08 in the dedicated live
-    # wiring suite); restated here as a source-order fact so this test alone
-    # continues to certify the law even if that file is ever removed: the
-    # materialization call precedes both `_run_engine` call sites textually,
-    # and both are inside the same unguarded `try` block that a raised
-    # `ModelContextBuildError` (mapped to `ContextPackError`) would abort.
+    # occurs, and the one live execution that DOES occur consumes exactly the
+    # already-materialized ModelContextAssembly under an engine identity that
+    # is POLICY, never a hardcoded provider name.
+    #
+    # TASK 20 reconciliation: Core.ask() no longer names an engine literally
+    # ("gemini") in its execution statement — which engine runs is read from
+    # the active `ExecutionProfile` at runtime (D20-00..14), so the previous
+    # pinned-literal proof (`self._run_engine("gemini"`) no longer exists to
+    # find, and is replaced below by a structural/AST proof of the STRONGER
+    # invariant set TASK 20 actually requires: exactly one live execution
+    # call site, fed the materialized assembly (never the raw `ContextPack`),
+    # with its engine-identity argument traced back to
+    # `execution_profile.engine_ids[0]` rather than hardcoded — restated here
+    # as a source-shape fact so this test alone continues to certify the law
+    # even if the dedicated TASK 19.3/20.3B live-wiring suites are ever
+    # removed.
+    orchestrator_tree = ast.parse(orchestrator_src)
+    core_class = next(
+        node for node in ast.walk(orchestrator_tree)
+        if isinstance(node, ast.ClassDef) and node.name == "Core"
+    )
+    ask_method = next(
+        node for node in ast.walk(core_class)
+        if isinstance(node, ast.FunctionDef) and node.name == "ask"
+    )
+
+    def _self_calls(node, attr_name):
+        """Every `self.<attr_name>(...)` Call node inside `node`."""
+        return [
+            n for n in ast.walk(node)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == attr_name
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == "self"
+        ]
+
+    def _single_target_name(assign):
+        if len(assign.targets) == 1 and isinstance(assign.targets[0], ast.Name):
+            return assign.targets[0].id
+        return None
+
+    # (C / H) exactly ONE live `_run_engine` call site in Core.ask — no
+    # second provider execution exists in the live Product path.
+    run_engine_calls = _self_calls(ask_method, "_run_engine")
+    assert len(run_engine_calls) == 1, run_engine_calls
+    assert orchestrator_src.count("self._run_engine(") == 1, orchestrator_src
+    run_engine_call = run_engine_calls[0]
+
+    # (E) the engine-identity argument is a variable reference, never a
+    # hardcoded string literal ("gemini" or any other provider spelling).
+    engine_arg = run_engine_call.args[0]
+    assert not isinstance(engine_arg, ast.Constant), ast.dump(engine_arg)
+    assert isinstance(engine_arg, ast.Name), ast.dump(engine_arg)
+
+    assigns = [n for n in ast.walk(ask_method) if isinstance(n, ast.Assign)]
+
+    # (F) that identity traces back to `execution_profile.engine_ids[0]`:
+    # locate the local bound to `self._execution_profile`, then the local
+    # bound to `<that>.engine_ids[...]`, and require the execution call's
+    # engine argument to be exactly that second local.
+    profile_var = None
+    for assign in assigns:
+        value = assign.value
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr == "_execution_profile"
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "self"
+        ):
+            profile_var = _single_target_name(assign)
+    assert profile_var is not None, "no local binds self._execution_profile"
+
+    engine_id_var = None
+    for assign in assigns:
+        value = assign.value
+        if (
+            isinstance(value, ast.Subscript)
+            and isinstance(value.value, ast.Attribute)
+            and value.value.attr == "engine_ids"
+            and isinstance(value.value.value, ast.Name)
+            and value.value.value.id == profile_var
+        ):
+            engine_id_var = _single_target_name(assign)
+    assert engine_id_var is not None, "no local reads <profile>.engine_ids[...]"
+    assert engine_arg.id == engine_id_var, (engine_arg.id, engine_id_var)
+
+    # (A / D / G) ordering and payload: the materialization call precedes the
+    # one execution call textually, and the execution call's PAYLOAD argument
+    # (second positional) is exactly the variable `_materialize_model_context`
+    # assigned its result to — never the raw `pack` (ContextPack) variable, so
+    # no original ContextPack is passed directly to the live provider
+    # execution boundary.
+    materialize_target = None
+    materialize_call_count = 0
+    for assign in assigns:
+        value = assign.value
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "_materialize_model_context"
+            and isinstance(value.func.value, ast.Name)
+            and value.func.value.id == "self"
+        ):
+            materialize_call_count += 1
+            materialize_target = _single_target_name(assign)
+    assert materialize_call_count == 1, materialize_call_count
+    assert materialize_target is not None, "materialize result is not bound to one name"
+    assert materialize_target != "pack"
+
+    payload_arg = run_engine_call.args[1]
+    assert isinstance(payload_arg, ast.Name), ast.dump(payload_arg)
+    assert payload_arg.id == materialize_target
+    assert payload_arg.id != "pack"
+
     materialize_at = orchestrator_src.index("self._materialize_model_context(")
-    first_run_engine_at = orchestrator_src.index('self._run_engine("gemini"')
-    assert materialize_at < first_run_engine_at
+    run_engine_at = orchestrator_src.index("self._run_engine(")
+    assert materialize_at < run_engine_at
 
     # (F) the proof is non-vacuous: the exact predicate used above really can
     # report a violation, demonstrated by deliberately probing a file that is
