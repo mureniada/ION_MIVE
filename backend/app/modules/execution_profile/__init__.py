@@ -18,7 +18,7 @@ from .models import (
     ExecutionProfile,
     ExecutionProfileError,
 )
-from .profiles import STANDARD_GEMINI
+from .profiles import STANDARD_GEMINI, ExecutionProfileResolutionError, resolve_execution_profile
 
 __all__ = [
     "EXECUTION_PROFILE_CONTRACT_ID",
@@ -26,5 +26,7 @@ __all__ = [
     "ExecutionMode",
     "ExecutionProfile",
     "ExecutionProfileError",
+    "ExecutionProfileResolutionError",
     "STANDARD_GEMINI",
+    "resolve_execution_profile",
 ]

@@ -28,6 +28,8 @@ from app.modules.execution_profile import (
     ExecutionMode,
     ExecutionProfile,
     ExecutionProfileError,
+    ExecutionProfileResolutionError,
+    resolve_execution_profile,
 )
 
 PACKAGE_DIR = Path(execution_profile.__file__).resolve().parent
@@ -360,6 +362,91 @@ def test_t20_26_no_mutable_profile_registry_exists():
 
 
 # --------------------------------------------------------------------- #
+# R20-01 .. R20-10  the pure execution-profile resolver (TASK 20.3A)
+# --------------------------------------------------------------------- #
+def test_r20_01_resolve_standard_gemini_returns_it_by_identity():
+    assert resolve_execution_profile("STANDARD_GEMINI") is STANDARD_GEMINI
+
+
+def test_r20_02_empty_id_rejected():
+    with pytest.raises(ExecutionProfileResolutionError):
+        resolve_execution_profile("")
+
+
+def test_r20_03_whitespace_only_id_rejected():
+    for refused in (" ", "\t", "\n", "   "):
+        with pytest.raises(ExecutionProfileResolutionError):
+            resolve_execution_profile(refused)
+
+
+def test_r20_04_leading_or_trailing_whitespace_rejected():
+    for refused in (" STANDARD_GEMINI", "STANDARD_GEMINI ", "\tSTANDARD_GEMINI\n"):
+        with pytest.raises(ExecutionProfileResolutionError):
+            resolve_execution_profile(refused)
+
+
+def test_r20_05_unknown_id_rejected():
+    for refused in ("UNKNOWN", "STANDARD_OPENAI", "DUAL", "STANDARD_GEMINI_V2"):
+        with pytest.raises(ExecutionProfileResolutionError):
+            resolve_execution_profile(refused)
+
+
+def test_r20_06_case_variant_rejected():
+    for refused in ("standard_gemini", "Standard_Gemini", "STANDARD_gemini"):
+        with pytest.raises(ExecutionProfileResolutionError):
+            resolve_execution_profile(refused)
+
+
+def test_r20_07_non_string_rejected():
+    for refused in (None, 7, 7.0, True, ["STANDARD_GEMINI"], {"STANDARD_GEMINI"}, b"STANDARD_GEMINI"):
+        with pytest.raises(ExecutionProfileResolutionError):
+            resolve_execution_profile(refused)
+
+
+def test_r20_08_resolver_performs_no_environment_or_config_lookup():
+    used = _identifiers(Path(profiles_module.__file__).resolve())
+    for forbidden in ("os", "environ", "getenv", "Settings", "settings"):
+        assert forbidden not in used, forbidden
+    # calling it twice with the same input is unaffected by any process
+    # environment mutation — proof by construction, not by mocking os.environ
+    import os as _os
+
+    before = resolve_execution_profile("STANDARD_GEMINI")
+    _os.environ["EXECUTION_PROFILE"] = "SOMETHING_ELSE"
+    try:
+        after = resolve_execution_profile("STANDARD_GEMINI")
+    finally:
+        del _os.environ["EXECUTION_PROFILE"]
+    assert before is after is STANDARD_GEMINI
+
+
+def test_r20_09_resolver_adds_no_registry_discovery_or_default_surface():
+    for name in (
+        "PROFILE_REGISTRY", "register_profile", "discover_profiles",
+        "list_profiles", "default_profile", "ProfileRegistry", "REGISTRY",
+        "DEFAULT_PROFILE", "resolve_default_execution_profile",
+    ):
+        assert not hasattr(profiles_module, name), name
+        assert not hasattr(execution_profile, name), name
+    # calling with no argument is not possible: there is no default parameter
+    import inspect
+
+    parameters = inspect.signature(resolve_execution_profile).parameters
+    assert list(parameters) == ["profile_id"]
+    assert parameters["profile_id"].default is inspect.Parameter.empty
+
+
+def test_r20_10_execution_profile_package_remains_pure_stdlib_or_own_package():
+    # the resolver's own module obeys the same import closure as the rest of
+    # the package (T20-21), re-asserted here as a standalone guarantee
+    absolute, relative = _imports(Path(profiles_module.__file__).resolve())
+    for module in absolute:
+        assert module.split(".")[0] in {"__future__"}, module
+    for level, module in relative:
+        assert level == 1 and module == "models", (level, module)
+
+
+# --------------------------------------------------------------------- #
 # public surface is closed
 # --------------------------------------------------------------------- #
 def test_public_exports_are_exact_and_closed():
@@ -369,7 +456,9 @@ def test_public_exports_are_exact_and_closed():
         "ExecutionMode",
         "ExecutionProfile",
         "ExecutionProfileError",
+        "ExecutionProfileResolutionError",
         "STANDARD_GEMINI",
+        "resolve_execution_profile",
     }
     assert len(execution_profile.__all__) == len(set(execution_profile.__all__))
     for name in execution_profile.__all__:

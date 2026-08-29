@@ -28,6 +28,7 @@ from app.modules.turn_record import (
     TURN_IDENTITY_BASIS_REQUEST_ID,
     TURN_RECORD_CONTRACT_ID,
     TURN_RECORD_VERSION,
+    ExecutionProfileBinding,
     GovernedEvidenceBinding,
     ModelExecutionBinding,
     TurnClosureState,
@@ -198,6 +199,7 @@ def _all_field_names():
     names = set()
     for cls in (
         TurnRecord,
+        ExecutionProfileBinding,
         GovernedEvidenceBinding,
         ModelExecutionBinding,
         TurnConfigurationBinding,
@@ -523,17 +525,47 @@ def test_t18_13_model_execution_carries_no_report_or_provider_output():
         assert not hasattr(_execution(), absent), absent
 
 
-def test_t18_14_no_execution_profile_or_policy_semantics_exist():
+def test_t18_14_execution_profile_identity_may_be_bound_but_not_implemented():
+    """TASK 20 replaces the old absolute prohibition with a narrower one.
+
+    OLD LAW (TASK 18): no execution-policy semantics of any kind exist here.
+
+    NEW LAW (TASK 20): Turn Record MAY bind EXECUTED POLICY IDENTITY —
+    `profile_id`, `profile_version`, `mode` — for PROVENANCE ONLY, via
+    `ExecutionProfileBinding` and `TurnRecord.execution_profile`. It still
+    MUST NOT contain or implement engine selection, dispatch, routing,
+    retry, fallback, termination, timeout, or strategy semantics, and the
+    `execution_profile` package's own types must still be unreachable
+    through this package's namespace — only bound STRING values may cross
+    the boundary, never the type that produced them.
+    """
     names = _all_field_names()
+
+    # allowed now: bare identity/version/mode fields, for provenance only
+    for allowed in ("execution_profile", "profile_id", "profile_version", "mode"):
+        assert allowed in names, allowed
+
+    # still forbidden: any actual policy MECHANISM vocabulary
     for absent in (
-        "execution_profile", "profile", "profile_id", "arm", "policy",
-        "dispatch_policy", "retry_policy", "fallback_policy",
-        "termination_policy", "timeout_policy", "mode", "strategy",
+        "profile", "arm", "policy", "dispatch_policy", "retry_policy",
+        "fallback_policy", "termination_policy", "timeout_policy", "strategy",
+        "route", "routing", "select_engine",
     ):
         assert absent not in names, absent
-    # and no such name is reachable through the package namespace either
-    for name in ("ExecutionProfile", "ModelExecutionProfile", "DispatchPolicy"):
-        assert not hasattr(turn_record, name), name
+
+    # the profile binding itself never duplicates WHICH engine ran — that
+    # identity belongs exclusively to ModelExecutionBinding.engine_id
+    for absent in ("engine_id", "engine_ids"):
+        assert absent not in _field_names(ExecutionProfileBinding), absent
+
+    # and no execution_profile TYPE is reachable through the package
+    # namespace either — only the plain-string-carrying binding is
+    for module in (turn_record, models, materializer):
+        for name in (
+            "ExecutionProfile", "ExecutionMode", "ModelExecutionProfile",
+            "DispatchPolicy", "resolve_execution_profile", "STANDARD_GEMINI",
+        ):
+            assert not hasattr(module, name), (module.__name__, name)
 
 
 def test_t18_14b_executions_must_be_present_typed_and_distinct():
@@ -699,6 +731,7 @@ def test_t18_21_public_exports_are_exact_and_closed():
         "TURN_RECORD_MATERIALIZER_ID",
         "TURN_RECORD_MATERIALIZER_VERSION",
         "TURN_RECORD_VERSION",
+        "ExecutionProfileBinding",
         "GovernedEvidenceBinding",
         "ModelExecutionBinding",
         "TurnClosureState",
@@ -724,6 +757,8 @@ def test_t18_22_no_runtime_provider_or_transport_name_is_reachable():
             "ContextPack", "ContextDocument", "Evidence", "IVEReport", "MIVEResult",
             "QdrantRetrieval", "GeminiIVE", "OpenAIIVE", "MIVEComparator",
             "DeterministicRenderer", "PricingTable", "SystemClock",
+            "ExecutionProfile", "ExecutionMode", "resolve_execution_profile",
+            "STANDARD_GEMINI", "ModelGateway",
             "Path", "os", "json", "uuid", "datetime", "time", "random",
         ):
             assert not hasattr(module, name), (module.__name__, name)

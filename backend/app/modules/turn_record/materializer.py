@@ -39,6 +39,7 @@ from typing import Any, NoReturn, Sequence
 
 from .models import (
     QUESTION_NORMALIZATION_STRIP,
+    ExecutionProfileBinding,
     GovernedEvidenceBinding,
     ModelExecutionBinding,
     TurnClosureState,
@@ -141,6 +142,28 @@ def _executions(value: Any) -> tuple[ModelExecutionBinding, ...]:
     return executions
 
 
+def _execution_profile(value: Any) -> ExecutionProfileBinding | None:
+    """Accept the caller's own policy-identity binding, or its absence.
+
+    `None` means the caller did not know, or did not supply, a profile
+    identity — the comparison-applicable shape this contract has always
+    accepted. A supplied value must already be a real `ExecutionProfileBinding`
+    (itself already shape-validated by its own `__post_init__`): this module
+    never constructs one from an opaque object, and never reads a Product
+    `ExecutionProfile` structurally, so it stays closed against that
+    package's types exactly as it stays closed against every other runtime
+    module.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, ExecutionProfileBinding):
+        _fail(
+            "execution_profile must be an ExecutionProfileBinding or None, "
+            f"found {type(value).__name__}"
+        )
+    return value
+
+
 def _normalized_question(value: Any) -> str:
     """Verify the declared normalization already holds. Never apply it."""
     question = _text(value, "question")
@@ -225,13 +248,14 @@ def materialize_turn_record(
     governed_basis: Any,
     context_pack_id: str,
     model_executions: Sequence[ModelExecutionBinding],
-    mive_overall_status: str,
+    mive_overall_status: str | None = None,
     configuration: TurnConfigurationBinding,
     turn_started_at: str,
     turn_closed_at: str,
     retrieval_latency_ms: float,
-    comparison_latency_ms: float,
+    comparison_latency_ms: float | None = None,
     pipeline_latency_ms: float,
+    execution_profile: ExecutionProfileBinding | None = None,
 ) -> TurnRecord:
     """Materialize the record of one COMPLETED turn.
 
@@ -250,6 +274,15 @@ def materialize_turn_record(
 
     `turn_started_at` and `turn_closed_at` are timestamps the CALLER took from
     its own injected clock. This module has no clock of its own.
+
+    `mive_overall_status` and `comparison_latency_ms` (TASK 20) are optional:
+    `None` on either means the comparison stage did not run for this turn.
+    Whether that is legal — and what `model_executions` cardinality it
+    requires — is enforced by `TurnRecord.__post_init__` itself, keyed on
+    `execution_profile`, so no construction path (this function or any
+    other) can bypass that law. `execution_profile` is likewise optional:
+    `None` means the caller did not supply a policy-identity binding, the
+    same comparison-applicable shape this function has always produced.
 
     Raises `TurnRecordMaterializationError` on every contract violation.
     """
@@ -280,9 +313,15 @@ def materialize_turn_record(
         )
 
     # --- the comparison outcome, carried verbatim ------------------------- #
-    # Read as an opaque value. This module owns no comparison vocabulary and
-    # never interprets, ranks or re-derives what the comparison concluded.
-    mive_overall_status = _text(mive_overall_status, "mive_overall_status")
+    # Read as an opaque value where present. This module owns no comparison
+    # vocabulary and never interprets, ranks or re-derives what a comparison
+    # concluded — nor whether the ABSENCE of one here is legal, which is a
+    # law `TurnRecord` itself enforces against `execution_profile`.
+    mive_overall_status = _optional_text(mive_overall_status, "mive_overall_status")
+    comparison_latency_ms = _optional_duration(
+        comparison_latency_ms, "comparison_latency_ms"
+    )
+    execution_profile = _execution_profile(execution_profile)
 
     if not isinstance(configuration, TurnConfigurationBinding):
         _fail(
@@ -299,12 +338,13 @@ def materialize_turn_record(
         turn_started_at=_text(turn_started_at, "turn_started_at"),
         turn_closed_at=_text(turn_closed_at, "turn_closed_at"),
         retrieval_latency_ms=_duration(retrieval_latency_ms, "retrieval_latency_ms"),
-        comparison_latency_ms=_duration(comparison_latency_ms, "comparison_latency_ms"),
+        comparison_latency_ms=comparison_latency_ms,
         pipeline_latency_ms=_duration(pipeline_latency_ms, "pipeline_latency_ms"),
         context_pack_id=context_pack_id,
         governed_evidence=governed_evidence,
         model_executions=executions,
         mive_overall_status=mive_overall_status,
+        execution_profile=execution_profile,
         configuration=configuration,
         failure=None,
     )
@@ -325,6 +365,7 @@ def materialize_failed_turn_record(
     retrieval_latency_ms: float | None = None,
     comparison_latency_ms: float | None = None,
     pipeline_latency_ms: float | None = None,
+    execution_profile: ExecutionProfileBinding | None = None,
 ) -> TurnRecord:
     """Materialize the record of one FAILED turn.
 
@@ -346,6 +387,14 @@ def materialize_failed_turn_record(
     named by `failure.error_stage` where the runtime truthfully has one; it is
     never given a binding of its own, because a failed attempt produced no
     measurement and would be indistinguishable from a completed one.
+
+    `execution_profile` (TASK 20) is likewise optional and NOT stage-dependent
+    in the usual sense: a resolved policy identity is normally known from the
+    very start of a turn, before retrieval or anything else is attempted, so a
+    caller MAY supply it even for the earliest possible failure. It is not
+    REQUIRED here, because a failure during profile resolution itself — before
+    any turn-like object exists to close — has no binding to supply and is
+    outside this function's contract entirely.
 
     This function neither takes a timestamp nor decides what failed: like its
     COMPLETED counterpart it records facts the caller already observed, and it
@@ -400,6 +449,7 @@ def materialize_failed_turn_record(
         governed_evidence=governed_evidence,
         model_executions=_executions(model_executions),
         mive_overall_status=_optional_text(mive_overall_status, "mive_overall_status"),
+        execution_profile=_execution_profile(execution_profile),
         configuration=configuration,
         failure=failure,
     )
