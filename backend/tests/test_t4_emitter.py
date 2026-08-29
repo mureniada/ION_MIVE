@@ -513,9 +513,16 @@ def test_every_failure_code_the_emitter_can_return_is_documented():
 @guarded
 def test_i8a_a_failing_provider_still_yields_an_observed_attempt_and_the_error_propagates():
     """This is why the wrapper sits at IVEPort: `_run_engine` re-raises."""
+    from types import SimpleNamespace
+
     from app.core.errors import ProviderError
     from app.modules.context_pack import ContextPackBuilder
     from app.modules.gemini_ive import GeminiIVE
+    from app.modules.model_context import (
+        DISPOSITION_ADMITTED,
+        CandidateContentProjection,
+        build_model_context,
+    )
     from app.modules.retrieval.embeddings import HashingEmbedder
     from app.modules.retrieval.memory_index import InMemoryRetrieval
     from t4.emitter import ObservingIVE
@@ -529,6 +536,30 @@ def test_i8a_a_failing_provider_still_yields_an_observed_attempt_and_the_error_p
     pack = ContextPackBuilder(char_budget=20_000).build(
         demo.QUESTION, retrieval.retrieve(demo.QUESTION, 3))
 
+    # HARNESS FIDELITY (TASK 19.3): the live IVEPort payload is the governed
+    # `ModelContextAssembly`, not the `ContextPack`. Built through the real,
+    # frozen `build_model_context` -- the identical production path
+    # `Core.ask()` uses -- admitting every document the pack submitted, over a
+    # structural governed-basis stand-in.
+    model_input = build_model_context(
+        governed_basis=SimpleNamespace(
+            question_id="Q-T4-I8A",
+            context_pack_id=pack.context_pack_id,
+            admitted=tuple(
+                SimpleNamespace(candidate_id=d.document_id, disposition=DISPOSITION_ADMITTED)
+                for d in pack.documents
+            ),
+        ),
+        candidate_projections=[
+            CandidateContentProjection(
+                document_id=d.document_id, content=d.content, title=d.title,
+                source_identity=d.source, page=d.page, chunk_id=d.chunk_id,
+            )
+            for d in pack.documents
+        ],
+        question=pack.question,
+    )
+
     observer = RunObserver()
     wrapped = ObservingIVE(
         GeminiIVE(Exploding(), model="gemini-2.5-pro"), observer=observer,
@@ -536,7 +567,7 @@ def test_i8a_a_failing_provider_still_yields_an_observed_attempt_and_the_error_p
         clock=lambda: 0, latency_source="test")
 
     with raises(ProviderError):
-        wrapped.run(pack)
+        wrapped.run(model_input)
 
     assert len(observer.calls) == 1
     attempt = observer.calls[0]

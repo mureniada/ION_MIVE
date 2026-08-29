@@ -1,21 +1,42 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from app.core.errors import ProviderError
-from app.core.models import ContextDocument, ContextPack
 from app.modules.gemini_ive import GeminiIVE
+from app.modules.model_context import (
+    DISPOSITION_ADMITTED,
+    CandidateContentProjection,
+    build_model_context,
+)
 from app.modules.openai_ive import OpenAIIVE
 from app.validation import validate_ive_report
 from tests.fakes import FakeBackend, make_ive_json
 from tests.util import raises
 
-
+# HARNESS FIDELITY (TASK 19.3): provider adapters now receive the governed
+# `ModelContextAssembly`, never the upstream `ContextPack` (D19-11). This
+# builds one through the real, frozen `build_model_context` -- the identical
+# production path `Core.ask()` uses -- over a structural governed-basis
+# stand-in, so the assembly under test is genuinely the product of the real
+# join logic, not a hand-shaped substitute for it.
 def _pack():
-    return ContextPack(
+    projection = CandidateContentProjection(
+        document_id="doc1", content="money is credit", title="Debt",
+        source_identity="src1", page=None, chunk_id=None,
+    )
+    governed_basis = SimpleNamespace(
+        question_id="Q-TEST",
         context_pack_id="cp_test",
+        admitted=(
+            SimpleNamespace(candidate_id="doc1", disposition=DISPOSITION_ADMITTED),
+        ),
+    )
+    return build_model_context(
+        governed_basis=governed_basis,
+        candidate_projections=[projection],
         question="What is money?",
-        documents=[ContextDocument("doc1", "Debt", "money is credit", "src1")],
     )
 
 

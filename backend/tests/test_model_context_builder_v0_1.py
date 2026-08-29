@@ -740,24 +740,35 @@ def test_t16_23_same_input_produces_value_equal_output():
 
 
 # --------------------------------------------------------------------- #
-# T16-24  the module is unwired IN PRODUCTION: no live code refers to it
+# T16-24  the module is WIRED ONLY THROUGH THE AUTHORIZED PRODUCT PATH
 #
-# The architectural law this proves is that the Model Context contract is not
-# yet wired into the live runtime: no orchestrator, port, adapter, renderer,
-# container or transport path may reach it until wiring is separately
-# authorized. The proof therefore inspects `backend/app/` — the production
-# tree — and fails if any production file outside this module's own package
-# names it.
+# TASK 19.3 intentionally wires this module into the live runtime, so the
+# ORIGINAL law this test proved — that no production file outside this
+# module's own package ever names it — is now intentionally false. Deleting
+# or weakening the proof would erase the architectural guarantee it protected;
+# instead the law is REPLACED by a strictly stronger one: not merely THAT the
+# module is unreferenced, but exactly WHICH files may reference it, and that
+# reaching it is the only way model execution proceeds at all.
 #
-# It deliberately does NOT inspect `backend/tests/`. A test importing the
-# public contract is verification, not wiring: it proves nothing runs through
-# the module at runtime, and forbidding it would make the contract untestable
-# by any other Product module that must demonstrate structural compatibility
-# with the real objects (TASK 17's T17-25 does exactly that). The earlier form
-# of this test scanned `tests/` too and so conflated the two; narrowing it
-# preserves the architectural law and drops only the conflation.
+# The exact allow-list below is not a guess: it was measured from the actual
+# TASK 19.3 implementation with the identical substring scan the original test
+# used, over `backend/app/` at the current HEAD. `app/core/orchestrator.py` is
+# the single materialization site; `app/core/ports.py` carries a TYPE_CHECKING
+# forward-reference so `IVEPort` can declare its payload type without Core
+# runtime-importing this package. No other production file names it: the two
+# provider adapters and `ive_common` reference `ModelContextAssembly` only as
+# a quoted forward-reference string, with no import backing it anywhere, and
+# so never surface the "model_context" substring their own source is scanned
+# for below — this is a stronger closure than a merely-permitted reference
+# would be, and the allow-list is a ceiling, not a floor.
 # --------------------------------------------------------------------- #
-def test_t16_24_no_production_file_references_this_module():
+_T16_24_ALLOWED_EXTERNAL_REFERENCES = frozenset({
+    "app/core/orchestrator.py",
+    "app/core/ports.py",
+})
+
+
+def test_t16_24_model_context_is_wired_only_through_the_authorized_product_path():
     module_dir = Path(models.__file__).resolve().parent
 
     referring = []
@@ -768,7 +779,8 @@ def test_t16_24_no_production_file_references_this_module():
         if "model_context" in resolved.read_text(encoding="utf-8"):
             referring.append(str(resolved.relative_to(BACKEND_ROOT)))
 
-    assert referring == [], referring
+    # (A) no unauthorized production file references this module.
+    assert set(referring) == _T16_24_ALLOWED_EXTERNAL_REFERENCES, referring
 
     # the production tree really was inspected, and really can detect a
     # reference: a scan that silently matched nothing would prove nothing.
@@ -779,6 +791,129 @@ def test_t16_24_no_production_file_references_this_module():
         for p in production_files
         if p.resolve().parent == module_dir
     )
+
+    orchestrator_src = (BACKEND_ROOT / "app" / "core" / "orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+
+    # (B) exactly ONE production call site invokes build_model_context.
+    assert orchestrator_src.count("build_model_context(") == 1, orchestrator_src
+
+    # (C) neither provider adapter package invokes the builder, imports this
+    # module, or reaches it via `ive_common`'s re-export surface (it has none).
+    for provider_dir in ("gemini_ive", "openai_ive"):
+        for path in sorted((BACKEND_ROOT / "app" / "modules" / provider_dir).rglob("*.py")):
+            src = path.read_text(encoding="utf-8")
+            assert "build_model_context" not in src, (path, src)
+            assert "model_context" not in src, (path, src)
+
+    ive_common_src = (BACKEND_ROOT / "app" / "modules" / "ive_common.py").read_text(
+        encoding="utf-8"
+    )
+    assert "build_model_context" not in ive_common_src
+
+    # (D) no live Product provider execution path accepts or receives a
+    # `ContextPack`: `IVEPort.run`'s own payload parameter does not name the
+    # type (scoped to that one method — `ContextPackBuilderPort.build` in the
+    # same file legitimately still returns a `ContextPack`, upstream of model
+    # execution), and neither provider adapter names or imports it.
+    ports_src = (BACKEND_ROOT / "app" / "core" / "ports.py").read_text(encoding="utf-8")
+    ports_tree = ast.parse(ports_src)
+    ive_port_node = next(
+        node for node in ast.walk(ports_tree)
+        if isinstance(node, ast.ClassDef) and node.name == "IVEPort"
+    )
+    run_node = next(
+        node for node in ast.walk(ive_port_node)
+        if isinstance(node, ast.FunctionDef) and node.name == "run"
+    )
+    for arg in run_node.args.args:
+        if arg.arg == "self":
+            continue
+        annotation_text = (
+            ast.get_source_segment(ports_src, arg.annotation) if arg.annotation else ""
+        )
+        assert "ContextPack" not in (annotation_text or ""), annotation_text
+
+    for provider_dir in ("gemini_ive", "openai_ive"):
+        adapter_path = BACKEND_ROOT / "app" / "modules" / provider_dir / "adapter.py"
+        adapter_src = adapter_path.read_text(encoding="utf-8")
+        adapter_tree = ast.parse(adapter_src)
+
+        # no import of ContextPack (prose mentioning it, e.g. in the module
+        # docstring explaining what is NOT accepted, is not code and is not
+        # what this law is about).
+        imported_names = {
+            alias.name
+            for node in ast.walk(adapter_tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert "ContextPack" not in imported_names, imported_names
+
+        # the run() method's own payload parameter does not name the type.
+        run_node = next(
+            node for node in ast.walk(adapter_tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "run"
+        )
+        for arg in run_node.args.args:
+            if arg.arg == "self":
+                continue
+            annotation_text = (
+                ast.get_source_segment(adapter_src, arg.annotation)
+                if arg.annotation else ""
+            )
+            assert "ContextPack" not in (annotation_text or ""), annotation_text
+
+    gateway_src = (
+        BACKEND_ROOT / "app" / "modules" / "model_gateway" / "gateway.py"
+    ).read_text(encoding="utf-8")
+    gateway_tree = ast.parse(gateway_src)
+    gateway_imported_names = {
+        alias.name
+        for node in ast.walk(gateway_tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert "ContextPack" not in gateway_imported_names, gateway_imported_names
+    execute_node = next(
+        node for node in ast.walk(gateway_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "execute"
+    )
+    for arg in execute_node.args.args:
+        if arg.arg in ("self", "engine_id"):
+            continue
+        annotation_text = (
+            ast.get_source_segment(gateway_src, arg.annotation)
+            if arg.annotation else ""
+        )
+        assert "ContextPack" not in (annotation_text or ""), annotation_text
+
+    # control: ContextPack really is still detectable elsewhere in app/, so
+    # (D) is not a vacuous prohibition against a name nobody uses any more.
+    control = [
+        p for p in production_files
+        if "ContextPack" in p.read_text(encoding="utf-8")
+        and p.resolve().parent != module_dir
+    ]
+    assert len(control) > 1, control
+
+    # (E) if build_model_context raises, no Gateway/provider/MIVE execution
+    # occurs. Proven at the unit level too (T19-3-06..08 in the dedicated live
+    # wiring suite); restated here as a source-order fact so this test alone
+    # continues to certify the law even if that file is ever removed: the
+    # materialization call precedes both `_run_engine` call sites textually,
+    # and both are inside the same unguarded `try` block that a raised
+    # `ModelContextBuildError` (mapped to `ContextPackError`) would abort.
+    materialize_at = orchestrator_src.index("self._materialize_model_context(")
+    first_run_engine_at = orchestrator_src.index('self._run_engine("gemini"')
+    assert materialize_at < first_run_engine_at
+
+    # (F) the proof is non-vacuous: the exact predicate used above really can
+    # report a violation, demonstrated by deliberately probing a file that is
+    # NOT on the allow-list and IS known not to reference this module.
+    unrelated = BACKEND_ROOT / "app" / "modules" / "mive" / "comparator.py"
+    assert "model_context" not in unrelated.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------- #

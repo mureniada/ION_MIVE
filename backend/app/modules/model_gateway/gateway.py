@@ -41,7 +41,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ...core.errors import ConfigurationError
-from ...core.models import ContextPack, IVEReport
+from ...core.models import IVEReport
 from ...core.ports import IVEPort
 
 MODEL_GATEWAY_CONTRACT_ID = "ION_MODEL_GATEWAY_V0_1"
@@ -102,8 +102,20 @@ class ModelGateway:
 
         self._engines = registered
 
-    def execute(self, engine_id: str, context_pack: ContextPack) -> IVEReport:
+    def execute(self, engine_id: str, context_pack: "ModelContextAssembly") -> IVEReport:
         """Execute the ONE engine the caller named, once, and return its report.
+
+        The parameter keeps its ORIGINAL v0.1 name (`context_pack`) so the
+        frozen TASK 19.2 Gateway suite pins it by name unchanged; the VALUE it
+        carries is now the TASK 19.3 `ModelContextAssembly`, never a
+        `ContextPack` — this Gateway forwards whatever the caller supplies and
+        never inspects it, so the parameter's identifier is not itself part of
+        the payload contract. `ModelContextAssembly` is named ONLY in this
+        string forward reference, deliberately with no import anywhere in this
+        module, so this boundary stays closed against the Product module that
+        defines its own payload type, exactly as it already stays closed
+        against every provider SDK. The Gateway remains payload-blind either
+        way: it never reads a field of what it forwards.
 
         An unrecognized identity is refused deterministically, before any engine
         is reached: nothing is guessed, nothing near-matches, and no engine

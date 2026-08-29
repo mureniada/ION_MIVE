@@ -7,12 +7,14 @@ as a script writes the canonical demonstration record.
 **What is real here, and what is recorded.** Both matter, and conflating them is
 exactly what B4 exists to prevent.
 
-*Real, produced locally by the repository's own code.* The Context Pack and the
-assembled prompt — built by `ContextPackBuilder` and `ive_common.build_user_prompt`
-from real documents — so the workload, prompt and context identities digest bytes
-that genuinely exist. The wiring is real too: a `Core` composed through its public
-keyword-only constructor with `ObservingIVE` wrapped around each `IVEPort`, and
-`Core.ask()` driving the pipeline.
+*Real, produced locally by the repository's own code.* The Context Pack, the
+governed `ModelContextAssembly` `Core.ask()` materializes from it (TASK 19.3),
+and the assembled prompt — built by `ContextPackBuilder` and
+`ive_common.build_model_input_prompt` from real documents — so the workload,
+prompt and context identities digest bytes that genuinely exist. The wiring is
+real too: a `Core` composed through its public keyword-only constructor with
+`ObservingIVE` wrapped around each `IVEPort` and resolved through the real
+`ModelGateway`, and `Core.ask()` driving the pipeline.
 
 *Recorded, carried from the run shape in the mandate's appendix B.* The per-call
 token counts and latencies, and the total wall clock. The provider backends are

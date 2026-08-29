@@ -4,6 +4,29 @@ This is a utility library shared by the two provider adapters. It is NOT a modul
 calling another module — it holds no provider SDK and no port. Each provider
 adapter builds the same prompt and maps native JSON into the canonical IVEReport,
 then validation guarantees the contract. Provider field names never leak past here.
+
+Prompt formatting has exactly ONE implementation, `_render_user_prompt`. Two
+thin builders feed it from two different sources:
+
+    `build_model_input_prompt(ModelContextAssembly)` — the LIVE Product path.
+    Every live provider execution reaches the model boundary through this one
+    (TASK 19.3).
+
+    `build_user_prompt(ContextPack)` — a LEGACY shim kept callable only for the
+    unwired `modules/live1/` experimental executor (D19-16). No live Product
+    orchestration path calls it any longer.
+
+Both delegate to the same formatter, so their output cannot silently drift
+apart: an equivalent question and document set renders byte-identical text
+through either entry point.
+
+`ModelContextAssembly` is read STRUCTURALLY here, by attribute — exactly as
+TASK 17 already reads a Model Context evidence item — so this module needs no
+runtime import of the Model Context package and cannot reach anything beyond
+the values a model may already see. `build_model_input_prompt` creates no
+evidence authority: it serializes an already-authorized assembly. It does not
+decide admission, rank, size, truncate, judge sufficiency, infer provenance,
+rewrite evidence or invent evidence.
 """
 
 from __future__ import annotations
@@ -14,6 +37,12 @@ from dataclasses import dataclass
 from ..core.errors import NormalizationError
 from ..core.models import Claim, Concept, ContextPack, IVEReport, Relation, Usage
 from ..validation import validate_ive_report
+
+# `ModelContextAssembly` is named only as a quoted forward reference below,
+# with NO import anywhere in this module: the six values this module reads
+# from it are read structurally, by attribute, so this module stays closed
+# against the Product package that defines the type, exactly as TASK 17
+# already reads a Model Context evidence item without importing TASK 16.
 
 
 @dataclass
@@ -98,13 +127,27 @@ IVE_RESPONSE_SCHEMA: dict = {
 }
 
 
-def build_user_prompt(pack: ContextPack) -> str:
-    """Deterministic prompt from the Context Pack. Same pack -> same prompt."""
-    lines = [f"QUESTION:\n{pack.question}", "", "CONTEXT DOCUMENTS:"]
-    for d in pack.documents:
-        page = "" if d.page is None else f" (page {d.page})"
-        lines.append(f"[{d.document_id}] {d.title}{page} — source: {d.source}")
-        lines.append(d.content)
+@dataclass(frozen=True)
+class _PromptItem:
+    """One document's prompt-facing values, normalized from either a
+    `ContextPack` document or a `ModelContextAssembly` evidence item. Exists
+    only so both sources can feed the ONE formatting implementation below."""
+
+    id: str
+    title: str
+    page: str | int | None
+    source: str
+    content: str
+
+
+def _render_user_prompt(*, question: str, items: list[_PromptItem]) -> str:
+    """THE single prompt-formatting implementation. Same question and items ->
+    same prompt, byte for byte, regardless of which builder below called it."""
+    lines = [f"QUESTION:\n{question}", "", "CONTEXT DOCUMENTS:"]
+    for item in items:
+        page = "" if item.page is None else f" (page {item.page})"
+        lines.append(f"[{item.id}] {item.title}{page} — source: {item.source}")
+        lines.append(item.content)
         lines.append("")
     lines.append(
         "Produce the JSON object. Use the bracketed document_id values above as "
@@ -112,6 +155,29 @@ def build_user_prompt(pack: ContextPack) -> str:
         "`uncertainty` rather than inventing support."
     )
     return "\n".join(lines)
+
+
+def build_model_input_prompt(model_input: "ModelContextAssembly") -> str:
+    """THE live prompt serializer: the only prompt construction on the live
+    Product provider-execution path. See the module docstring."""
+    items = [
+        _PromptItem(
+            id=item.candidate_id, title=item.title, page=item.page,
+            source=item.source_identity, content=item.content,
+        )
+        for item in model_input.evidence
+    ]
+    return _render_user_prompt(question=model_input.question, items=items)
+
+
+def build_user_prompt(pack: ContextPack) -> str:
+    """LEGACY shim for `modules/live1/` only — see the module docstring.
+    Deterministic: same pack -> same prompt."""
+    items = [
+        _PromptItem(id=d.document_id, title=d.title, page=d.page, source=d.source, content=d.content)
+        for d in pack.documents
+    ]
+    return _render_user_prompt(question=pack.question, items=items)
 
 
 def _require(cond: bool, msg: str) -> None:

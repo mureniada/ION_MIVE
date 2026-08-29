@@ -7,9 +7,11 @@ identified target at a time. Which targets a turn asks for, and in what order,
 is still stated here, in the two literal calls below — that is caller policy a
 later, separately authorized layer will own, not execution mechanics.
 
-It runs the two IVE engines independently (each sees ONLY the Context Pack),
-then MIVE, then the renderer, then telemetry. A single provider failure yields
-an incomplete MIVE state — never a success (docs/06).
+It runs the two IVE engines independently, each seeing ONLY the governed
+`ModelContextAssembly` materialized for this turn (TASK 19.3) — never the
+upstream `ContextPack` directly, and never another engine's output — then
+MIVE, then the renderer, then telemetry. A single provider failure yields an
+incomplete MIVE state — never a success (docs/06).
 
 Progress is reported through an optional callback so the API layer can drive the
 DEBUG-gated SSE stream without the core knowing anything about transport.
@@ -34,6 +36,12 @@ from ..modules.governed_evidence import (
     GovernedEvidenceSet,
     MaterializationInput,
     materialize_governed_evidence_set,
+)
+from ..modules.model_context import (
+    CandidateContentProjection,
+    ModelContextAssembly,
+    ModelContextBuildError,
+    build_model_context,
 )
 from ..modules.model_gateway import ModelGateway
 from ..modules.telemetry.pricing import PRICING_AS_OF
@@ -269,21 +277,35 @@ class Core:
             # the governed basis of this run from values the Product already holds.
             # The gate itself is unchanged: same call, same position, same exceptions.
             # Its result is CAPTURED rather than discarded, so the Turn Record can
-            # bind the governed basis BY REFERENCE when the turn closes. It is still
-            # not consumed by any engine, by MIVE, by the renderer or by AskResult.
+            # bind the governed basis BY REFERENCE when the turn closes. Beyond that
+            # binding, it is now also the basis the Model Context Builder joins
+            # against immediately below — its ADMITTED identities are what determine
+            # which content the engines may see. It is still not consumed by MIVE,
+            # the renderer or `AskResult`.
             governed_evidence = self._materialize_governed_evidence(
                 governance, evidence, pack, request_id
             )
+
+            # --- model context: the ONLY object that crosses into model execution ---
+            # Built strictly after the governed-evidence gate and strictly before the
+            # first engine call (TASK 19.3), from values already held: the governed
+            # basis just materialized, and the submitted Context Pack's own document
+            # content. This is what makes "only admitted governed evidence may enter
+            # model input" a property of CONSTRUCTION rather than an upstream equality
+            # assertion — a non-admitted candidate is never looked up by the frozen
+            # Builder, so it has no path into the object the engines receive.
+            model_input = self._materialize_model_context(governed_evidence, pack, q)
 
             # --- independent IVE runs (neither sees the other) ---
             # The two engine identities below are CALLER POLICY, stated here and
             # nowhere else: the Gateway executes the target it is handed and
             # never chooses one. Deliberately two literal statements rather than
             # a loop over a collection — a collection would already be the
-            # execution-policy layer this phase does not implement.
-            gemini_report = self._run_engine("gemini", pack, errors.STAGE_GEMINI, emit)
+            # execution-policy layer this phase does not implement. Both engines
+            # receive the SAME `model_input` object — never the upstream ContextPack.
+            gemini_report = self._run_engine("gemini", model_input, errors.STAGE_GEMINI, emit)
             completed_reports = (gemini_report,)
-            openai_report = self._run_engine("openai", pack, errors.STAGE_OPENAI, emit)
+            openai_report = self._run_engine("openai", model_input, errors.STAGE_OPENAI, emit)
             completed_reports = (gemini_report, openai_report)
 
             # --- MIVE ---
@@ -460,6 +482,48 @@ class Core:
                 "Governed evidence materialization failed: " + str(exc)
             ) from exc
 
+    def _materialize_model_context(
+        self, governed_basis: GovernedEvidenceSet, pack, question: str
+    ) -> ModelContextAssembly:
+        """Materialize the ONLY object that may cross into model execution.
+
+        Every value below is one the caller already holds at this point: the
+        governed basis governance just produced, and the Context Pack Product
+        already built. Building the projections is a pure one-pass copy of
+        each document's model-facing fields — no governance logic, no
+        metadata, no score, no ranking and no defaulting happens here. The
+        frozen Builder performs the one substantive decision itself: which of
+        these projections may actually be exposed, by joining on the governed
+        basis's own ADMITTED identities and excluding everything else.
+
+        Only `ModelContextBuildError` is caught. An operational fault must
+        still propagate untouched, so no broad `Exception` handler wraps this
+        call. The mapping onto `ContextPackError` is a transport / error-model
+        COMPATIBILITY mapping, exactly like the governed-evidence mapping
+        above; it does NOT assert that Context Pack construction failed.
+        """
+        projections = [
+            CandidateContentProjection(
+                document_id=d.document_id,
+                content=d.content,
+                title=d.title,
+                source_identity=d.source,
+                page=d.page,
+                chunk_id=d.chunk_id,
+            )
+            for d in pack.documents
+        ]
+        try:
+            return build_model_context(
+                governed_basis=governed_basis,
+                candidate_projections=projections,
+                question=question,
+            )
+        except ModelContextBuildError as exc:
+            raise errors.ContextPackError(
+                "Model context materialization failed: " + str(exc)
+            ) from exc
+
     def _materialize_turn_record(
         self,
         *,
@@ -593,9 +657,12 @@ class Core:
         )
 
     def _run_engine(
-        self, engine_id: str, pack, stage: str, emit: ProgressCallback
+        self, engine_id: str, model_input, stage: str, emit: ProgressCallback
     ) -> IVEReport:
         """Run ONE explicitly identified engine through the Model Gateway.
+
+        `model_input` is the `ModelContextAssembly` materialized once, before
+        either call (TASK 19.3) — never the upstream `ContextPack`.
 
         This method remains the progress authority: the Gateway emits nothing,
         so the stage lifecycle vocabulary and its order are unchanged. It also
@@ -606,7 +673,7 @@ class Core:
         """
         emit(stage, "started")
         try:
-            report = self._model_gateway.execute(engine_id, pack)
+            report = self._model_gateway.execute(engine_id, model_input)
         except errors.IonError as exc:
             # keep a specific stage the adapter set; only fill an unknown one.
             if exc.stage == "unknown":

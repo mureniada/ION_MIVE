@@ -29,6 +29,10 @@ from app.modules.core_adapter import CoreAdapter
 
 REPO_ROOT = Path(os.environ["ION_REPO_ROOT"]).resolve()
 
+VERIFIED = "VERIFIED"
+PENDING = "PENDING"
+PASS = "PASS"
+
 
 class _Clock:
     def __init__(self):
@@ -92,10 +96,72 @@ def _adapter(bridge):
     return adapter
 
 
+# `_Retrieval` always returns exactly one candidate, "EV-001". The Context
+# Pack must submit that same one candidate — with the full `ContextDocument`
+# field set the live Model Context materialization step now reads (TASK
+# 19.3) — and the passing gate below must ADMIT that same one candidate, so
+# the governed basis is genuinely non-empty. Fidelity only: no assertion below
+# depends on these specific values.
+_CANDIDATE_ID = "EV-001"
+
+
+def _native_for(candidate_ids):
+    """Shaped exactly as the real `RuntimeAdmissionGateResult` (mirrors the
+    identical helper in the sibling TASK 14 / TASK 18 orchestrator suites)."""
+    return SimpleNamespace(
+        records=tuple(
+            SimpleNamespace(
+                evidence_id=candidate_id,
+                status=VERIFIED,
+                validation_id="VAL-" + candidate_id,
+                fingerprint=SimpleNamespace(
+                    algorithm="SHA256",
+                    hash="FP-" + candidate_id,
+                    content_id=candidate_id,
+                ),
+            )
+            for candidate_id in candidate_ids
+        ),
+        validations=tuple(
+            SimpleNamespace(
+                validation_id="VAL-" + candidate_id,
+                evidence_id=candidate_id,
+                result=PASS,
+                blocking_reasons=(),
+                evidence_fingerprint_hash="FP-" + candidate_id,
+            )
+            for candidate_id in candidate_ids
+        ),
+        transitions=tuple(
+            SimpleNamespace(
+                transition_id="TR-" + candidate_id,
+                evidence_id=candidate_id,
+                from_status=PENDING,
+                to_status=VERIFIED,
+                validation_id="VAL-" + candidate_id,
+            )
+            for candidate_id in candidate_ids
+        ),
+    )
+
+
 def _core(bridge=None):
     # `metadata` mirrors the real ContextPack, which always carries one
     # (core/models.py). Fidelity only — no assertion below depends on it.
-    pack = SimpleNamespace(context_pack_id="CP-001", documents=[], metadata={})
+    # `title` / `source` / `page` / `chunk_id` mirror the real
+    # `ContextDocument`, which always carries all six fields — the live
+    # Model Context materialization step now reads every one of them.
+    pack = SimpleNamespace(
+        context_pack_id="CP-001",
+        documents=[
+            SimpleNamespace(
+                document_id=_CANDIDATE_ID, content="body",
+                title="Title-" + _CANDIDATE_ID, source="SRC-" + _CANDIDATE_ID,
+                page=None, chunk_id=None,
+            )
+        ],
+        metadata={},
+    )
     bridge = _Bridge() if bridge is None else bridge
     core = orch.Core.__new__(orch.Core)
     core._settings = SimpleNamespace(default_top_k=1)
@@ -103,8 +169,6 @@ def _core(bridge=None):
     core._retrieval = _Retrieval()
     core._build = _Builder(pack)
     core._core_adapter = _adapter(bridge)
-    core._gemini = object()
-    core._openai = object()
     core._mive = object()
     core._renderer = object()
     core._pricing = object()
@@ -117,10 +181,11 @@ def _patch_gate(monkeypatch, fn):
 
 
 def _passing_gate(**kwargs):
-    # `validations` / `transitions` mirror the real RuntimeAdmissionGateResult
-    # (admission/claim_adjudication.py), which always returns all three in
-    # lock-step. Fidelity only — no assertion below depends on them.
-    return SimpleNamespace(records=(), validations=(), transitions=())
+    # ADMITS exactly the one candidate `_Retrieval`/`_core()` submit, so the
+    # governed basis the live Model Context materialization step joins
+    # against is genuinely non-empty — never a fabricated admission, since
+    # `_Retrieval` and the Context Pack above always agree on this one id.
+    return _native_for((_CANDIDATE_ID,))
 
 
 def _failing_gate(**kwargs):
@@ -217,7 +282,17 @@ def test_p5_18ab_t31_all_pass_gate_permits_both_provider_call_attempts(monkeypat
     assert len(provider_calls) == 2
 
 
-def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(monkeypatch):
+def test_p5_18ab_t32_same_model_context_instance_reused_only_after_all_pass_gate(monkeypatch):
+    """T32, reconciled for TASK 19.3.
+
+    Originally: both engines reused the SAME `ContextPack` instance the gate
+    itself saw. Since TASK 19.3, engines no longer receive the `ContextPack`
+    at all — only the governed `ModelContextAssembly` materialized after the
+    gate passes. The cross-engine canonical-input identity law this test
+    proved is NOT removed; it is strengthened: both engines still receive one
+    identical object, and that object is now additionally proven to be the
+    live `ModelContextAssembly`, never the upstream `ContextPack`.
+    """
     core, pack, _ = _core()
     seen = {"gate": None, "providers": []}
 
@@ -225,8 +300,8 @@ def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(
         seen["gate"] = kwargs["pack"]
         return _passing_gate(**kwargs)
 
-    def provider(engine, provider_pack, stage, emit):
-        seen["providers"].append(provider_pack)
+    def provider(engine, model_input, stage, emit):
+        seen["providers"].append(model_input)
         if len(seen["providers"]) == 2:
             raise RuntimeError("stop-after-second-provider")
         return object()
@@ -237,9 +312,17 @@ def test_p5_18ab_t32_same_context_pack_instance_reused_only_after_all_pass_gate(
     with pytest.raises(RuntimeError):
         core.ask("Question", top_k=1)
 
+    # the admission gate still sees the real, upstream Context Pack...
     assert seen["gate"] is pack
     assert len(seen["providers"]) == 2
-    assert all(item is pack for item in seen["providers"])
+    # ...but both engines receive the SAME materialized ModelContextAssembly,
+    # by identity — the cross-engine canonical-input law, strengthened — and
+    # it is NOT the Context Pack the gate saw: only admitted governed content
+    # may reach a provider (TASK 19.3).
+    assert seen["providers"][0] is seen["providers"][1]
+    assert all(item is not pack for item in seen["providers"])
+    from app.modules.model_context import ModelContextAssembly
+    assert all(isinstance(item, ModelContextAssembly) for item in seen["providers"])
 
 
 def test_p5_18ab_t33_no_second_retrieval_call(monkeypatch):

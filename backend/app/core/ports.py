@@ -7,9 +7,15 @@ directly. This is how "modules talk to the core" (docs/14).
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .models import BlindedAnswer, ContextPack, EvaluationRecord, Evidence, IVEReport, MIVEResult
+
+if TYPE_CHECKING:
+    # Type-only: Core is wired to concrete engines exclusively through the
+    # Model Gateway (itself wired by app/container.py), so this module never
+    # runtime-imports the Product module that defines its payload type.
+    from ..modules.model_context import ModelContextAssembly
 
 
 @runtime_checkable
@@ -41,9 +47,15 @@ class ContextPackBuilderPort(Protocol):
 
 @runtime_checkable
 class IVEPort(Protocol):
-    """One independent model interpretation of one Context Pack (docs/05).
+    """One independent model interpretation of one authorized Model Context
+    for a turn (docs/05).
 
-    Implementations receive ONLY the Context Pack — never another engine's output.
+    Implementations receive ONLY the already-governed `ModelContextAssembly`
+    for this turn — never another engine's output, and never the upstream
+    `ContextPack` directly (TASK 19.3): only admitted governed content may
+    reach a provider. The payload is a forward reference so this module,
+    which Core depends on directly, never runtime-imports the Product module
+    that defines it.
     """
 
     @property
@@ -55,7 +67,7 @@ class IVEPort(Protocol):
     @property
     def model(self) -> str: ...
 
-    def run(self, context_pack: ContextPack) -> IVEReport: ...
+    def run(self, model_input: "ModelContextAssembly") -> IVEReport: ...
 
 
 @runtime_checkable

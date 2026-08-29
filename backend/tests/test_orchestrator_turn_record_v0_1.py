@@ -249,7 +249,17 @@ def _pack(document_ids):
     return SimpleNamespace(
         context_pack_id="CP-001",
         documents=[
-            SimpleNamespace(document_id=did, content="body") for did in document_ids
+            # `title` / `source` / `page` / `chunk_id` mirror the real
+            # `ContextDocument`, which always carries all six fields
+            # (core/models.py) — the live Model Context materialization step
+            # now reads every one of them. Fidelity only — no assertion below
+            # depends on their specific values.
+            SimpleNamespace(
+                document_id=did, content="body",
+                title="Title-" + did, source="SRC-" + did,
+                page=None, chunk_id=None,
+            )
+            for did in document_ids
         ],
         metadata={"included_documents": len(tuple(document_ids))},
     )

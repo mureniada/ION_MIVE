@@ -3,6 +3,12 @@
 Provider-agnostic normalization lives in `ive_common`. The adapter only knows its
 identity and a `backend` object exposing `.generate(system, user, schema)`.
 Tests inject a fake backend; the real one is `backend.GeminiBackend` (lazy SDK).
+
+Receives ONLY the already-governed `ModelContextAssembly` for this turn (TASK
+19.3) — never the upstream `ContextPack`, and never another engine's output.
+It imports no governance, admission, retrieval, Core Adapter, Turn Record or
+Response Evidence type: the input it is given here is already authorized
+before it ever reaches this adapter.
 """
 
 from __future__ import annotations
@@ -10,8 +16,13 @@ from __future__ import annotations
 import time
 
 from ...core.errors import NormalizationError, ProviderError
-from ...core.models import ContextPack, IVEReport, Usage
+from ...core.models import IVEReport, Usage
 from .. import ive_common as ic
+
+# `ModelContextAssembly` is named only as a quoted forward reference below,
+# with NO import anywhere in this module: this adapter never inspects the
+# payload beyond handing it to `ive_common`, so it stays closed against the
+# Product package that defines the type.
 
 
 class GeminiIVE:
@@ -31,8 +42,8 @@ class GeminiIVE:
     def model(self) -> str:
         return self._model
 
-    def run(self, context_pack: ContextPack) -> IVEReport:
-        prompt = ic.build_user_prompt(context_pack)
+    def run(self, model_input: "ModelContextAssembly") -> IVEReport:
+        prompt = ic.build_model_input_prompt(model_input)
         t0 = time.monotonic()
         try:
             result: ic.GenerationResult = self._backend.generate(
@@ -55,7 +66,7 @@ class GeminiIVE:
                 engine_id=self._engine_id,
                 provider=self.provider,
                 model=self._model,
-                question=context_pack.question,
+                question=model_input.question,
                 raw_text=result.text,
                 usage=usage,
             )

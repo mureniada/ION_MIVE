@@ -17,8 +17,10 @@ prevent, so both are stated exactly.
 * The canonical `ContextPackBuilder` (`context_pack/builder.py:22`), including its
   `validate_context_pack` guarantee, reached through a recording wrapper that keeps the
   pack the run actually used rather than rebuilding one afterwards.
-* Prompt construction: `ive_common.build_user_prompt`, via the real `GeminiIVE` and
-  `OpenAIIVE` adapters; then the real `MIVEComparator`, `DeterministicRenderer`,
+* Prompt construction: `ive_common.build_model_input_prompt`, over the governed
+  `ModelContextAssembly` the real `Core.ask()` materializes for this turn (TASK
+  19.3) — via the real `GeminiIVE` and `OpenAIIVE` adapters, resolved through
+  the real `ModelGateway`; then the real `MIVEComparator`, `DeterministicRenderer`,
   `PricingTable`, `Settings` and `SystemClock`.
 * A real `Core.ask()` traversal, end to end, with `ObservingIVE` wrapped around each
   `IVEPort` and injected through the public keyword-only constructor (D7).
