@@ -48,7 +48,10 @@ async def ask(payload: dict | None = None):
 
     settings, core = _get_core()
     try:
-        require_ready(settings)
+        # The SAME resolved profile Core itself executes under — never a
+        # second, independent resolution of `settings.execution_profile_id`
+        # (TASK 20 / D20-03).
+        require_ready(settings, core.execution_profile)
     except ConfigurationError as exc:
         code, body = service.not_ready_payload(exc)
         return JSONResponse(status_code=code, content=body)
@@ -77,7 +80,7 @@ def ask_stream(question: str, top_k: int | None = None):
 
     settings, core = _get_core()
     try:
-        require_ready(settings)
+        require_ready(settings, core.execution_profile)
     except ConfigurationError as exc:
         code, body = service.not_ready_payload(exc)
         return JSONResponse(status_code=code, content=body)

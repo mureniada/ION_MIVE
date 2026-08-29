@@ -31,6 +31,11 @@ class Settings:
     qdrant_collection: str
     qdrant_upsert_batch_size: int   # points per Qdrant upsert request
     context_char_budget: int        # explicit truncation budget (docs/04)
+    # The requested Model Execution Profile identity (TASK 20). "" is an
+    # INVALID CONFIGURATION MARKER, never a default execution profile: no
+    # policy may be silently selected. Composition (app/container.py) fails
+    # closed on "", exactly as it does on an unknown identity — see docs/14.
+    execution_profile_id: str = ""
 
     @staticmethod
     def load(env: dict[str, str] | None = None) -> "Settings":
@@ -47,6 +52,9 @@ class Settings:
             qdrant_collection=e.get("VECTOR_COLLECTION", "ion_corpus_v1"),
             qdrant_upsert_batch_size=int(e.get("QDRANT_UPSERT_BATCH_SIZE", "128")),
             context_char_budget=int(e.get("CONTEXT_CHAR_BUDGET", "60000")),
+            # Missing EXECUTION_PROFILE becomes "", the invalid marker above —
+            # never a silently chosen profile.
+            execution_profile_id=e.get("EXECUTION_PROFILE", ""),
         )
 
 

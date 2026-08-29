@@ -78,25 +78,30 @@ def test_ask_stream_available_when_debug_true():
 
 
 def test_post_ask_returns_complete_rendered_result_for_real_question():
-    """I2: proves POST /ask, via the real ASGI route, reaches injected fake
-    providers and retrieval exactly once with the exact request values, and
+    """I2: proves POST /ask, via the real ASGI route, reaches an injected fake
+    provider and retrieval exactly once with the exact request values, and
     returns the renderer's output byte-for-byte through HTTP.
+
+    TASK 20 policy reconciliation: live policy is STANDARD_GEMINI/SINGLE, so
+    this proves the ONE fake provider is reached — no OpenAI adapter is even
+    constructed (D20-10) — and that the renderer's SINGLE path is the one
+    Core actually calls.
 
     The renderer is substituted with a deterministic sentinel double rather than
     hand-predicting its real numeric output (which depends on non-deterministic
     wall-clock provider latency inside the adapters), so the HTTP-body assertion
-    below is exact and risk-free. Retrieval, both fake providers, and MIVE still
-    run for real, proving the request is correctly plumbed all the way through.
+    below is exact and risk-free. Retrieval and the one fake provider still run
+    for real, proving the request is correctly plumbed all the way through.
     """
     client = _client()
     import app.main as main
     from app.core.config import Settings
     from app.core.orchestrator import Core
     from app.modules.context_pack import ContextPackBuilder
+    from app.modules.execution_profile import STANDARD_GEMINI
     from app.modules.gemini_ive import GeminiIVE
     from app.modules.mive import MIVEComparator
     from app.modules.model_gateway import ModelGateway
-    from app.modules.openai_ive import OpenAIIVE
     from app.modules.retrieval.embeddings import HashingEmbedder
     from app.modules.retrieval.memory_index import InMemoryRetrieval
     from app.modules.telemetry import PricingTable
@@ -119,34 +124,31 @@ def test_post_ask_returns_complete_rendered_result_for_real_question():
     retrieval = _RecordingRetrieval(inner_retrieval)
 
     gem_backend = FakeBackend(make_ive_json(), input_tokens=100, output_tokens=50)
-    openai_backend = FakeBackend(make_ive_json(), input_tokens=100, output_tokens=50)
 
     sentinel = {
         "question": "sentinel-question",
         "primary_answer": "SENTINEL_PRIMARY_ANSWER",
-        "mive_assessment": {"overall_status": "sentinel_status"},
-        "uncertainty": {"shared": [], "per_engine": {}},
+        "mive_assessment": None,
+        "uncertainty": {"reported": []},
         "evidence": [],
         "operational_metrics": {"total_estimated_cost": None},
         "disclaimer": "SENTINEL_DISCLAIMER",
     }
     fake_renderer = mock.Mock()
-    fake_renderer.render.return_value = sentinel
+    fake_renderer.render_single.return_value = sentinel
 
-    settings = Settings.load({"OPENAI_MODEL": "gpt-test", "GEMINI_MODEL": "gemini-test"})
+    settings = Settings.load({"GEMINI_MODEL": "gemini-test"})
     gemini = GeminiIVE(gem_backend, model="gemini-test")
-    openai = OpenAIIVE(openai_backend, model="gpt-test")
     fake_core = Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(char_budget=settings.context_char_budget),
-        model_gateway=ModelGateway(
-            {gemini.engine_id: gemini, openai.engine_id: openai}
-        ),
+        model_gateway=ModelGateway({gemini.engine_id: gemini}),
         mive=MIVEComparator(),
         renderer=fake_renderer,
         pricing=PricingTable(),
         clock=DummyClock(),
         settings=settings,
+        execution_profile=STANDARD_GEMINI,
     )
 
     with mock.patch.object(main, "_get_core", return_value=(settings, fake_core)), \
@@ -157,9 +159,9 @@ def test_post_ask_returns_complete_rendered_result_for_real_question():
     assert resp.json() == sentinel
 
     assert gem_backend.calls == 1
-    assert openai_backend.calls == 1
 
     assert retrieval.calls == [("What is money?", 5)]
 
-    fake_renderer.render.assert_called_once()
-    assert fake_renderer.render.call_args.kwargs["question"] == "What is money?"
+    fake_renderer.render_single.assert_called_once()
+    assert fake_renderer.render_single.call_args.kwargs["question"] == "What is money?"
+    fake_renderer.render.assert_not_called()

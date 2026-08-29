@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     # Type-only: Core is wired to concrete engines exclusively through the
     # Model Gateway (itself wired by app/container.py), so this module never
     # runtime-imports the Product module that defines its payload type.
-    from ..modules.model_context import ModelContextAssembly
+    from ..modules.model_context import EvidenceContextItem, ModelContextAssembly
 
 
 @runtime_checkable
@@ -90,6 +90,25 @@ class RendererPort(Protocol):
         evidence: list[Evidence],
         metrics_dict: dict,
     ) -> dict: ...
+
+    def render_single(
+        self,
+        *,
+        question: str,
+        report: IVEReport,
+        authorized_evidence_basis: "tuple[EvidenceContextItem, ...]",
+        metrics_dict: dict,
+    ) -> dict:
+        """Render one engine's report under a comparison-not-applicable policy.
+
+        `authorized_evidence_basis` is the SAME evidence tuple the executed
+        engine itself received — Model Context evidence, never the broader
+        retrieved-candidate list — so an implementation can resolve a report's
+        own citations without ever reaching for a wider evidence authority
+        than the one that actually reasoned over it (TASK 17 remains
+        unwired; this is not a substitute for it).
+        """
+        ...
 
 
 @runtime_checkable

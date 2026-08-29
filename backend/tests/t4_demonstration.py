@@ -197,6 +197,18 @@ def run_demonstration(store: Path, *, manifest_path: Path | None = None,
         sequence=2, provider="openai", requested_model=OPENAI_MODEL,
         clock=clock, latency_source=RECORDED_SOURCE)
 
+    # TASK 20: Core now requires an injected `execution_profile` and executes
+    # only the engine(s) it names. STANDARD_GEMINI/SINGLE names "gemini"
+    # only, so `observed_openai` below is registered but NEVER invoked by a
+    # live `core.ask()` call — this demonstration's dual-provider dispatch
+    # recording (the "planned_calls"/"dispatch order" facts fed to the T4
+    # emitter below) is therefore ARCHITECTURALLY STALE against the live
+    # policy. Reconciling the T4 recording semantics themselves to a
+    # profile-driven world is out of TASK 20's bounded scope; this is the
+    # minimum fix required so the script's Core construction does not raise
+    # a TypeError. STANDARD_GEMINI is passed explicitly rather than assumed.
+    from app.modules.execution_profile import STANDARD_GEMINI
+
     core = Core(
         retrieval=retrieval,
         context_pack_builder=builder,
@@ -209,6 +221,7 @@ def run_demonstration(store: Path, *, manifest_path: Path | None = None,
         pricing=pricing_module.PricingTable(),
         clock=DummyClock(),
         settings=settings,
+        execution_profile=STANDARD_GEMINI,
     )
     result = core.ask(QUESTION, top_k=3)
 

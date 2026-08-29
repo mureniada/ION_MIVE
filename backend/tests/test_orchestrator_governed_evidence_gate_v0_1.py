@@ -26,6 +26,7 @@ from app.core.models import AskResult
 import app.core.orchestrator as orch
 import app.modules.core_adapter.facade as facade
 from app.modules.core_adapter import CoreAdapter
+from app.modules.execution_profile import STANDARD_GEMINI
 from app.modules.governed_evidence import (
     GOVERNED_EVIDENCE_SET_ID,
     GovernanceDisposition,
@@ -134,6 +135,10 @@ class _Renderer:
         self.calls += 1
         return {"primary_answer": "answer"}
 
+    def render_single(self, **kwargs):
+        # Core (TASK 20) calls only this path today.
+        return self.render(**kwargs)
+
 
 class _Pricing:
     def estimate_cost(self, model, input_tokens, output_tokens):
@@ -229,9 +234,11 @@ def _pack(document_ids):
 def _core(*, retrieved=("EV-1",), submitted=None, bridge=None):
     """A real Core over stand-ins: only the seams are fake, ask() is genuine.
 
-    The two engine stand-ins are registered in a real ModelGateway — the same
-    provider-neutral boundary production uses — and returned alongside the Core
-    so that the call assertions below still observe the ENGINES themselves,
+    Live policy (TASK 20) is STANDARD_GEMINI/SINGLE: the engine stand-in is
+    registered in a real ModelGateway — the same provider-neutral boundary
+    production uses — under "gemini" only, matching production composition
+    exactly (D20-10: OpenAI is never registered). Returned alongside the
+    Core so the call assertions below still observe the ENGINE itself,
     unchanged in meaning. Core holds no provider-named engine field to reach.
     """
     submitted = retrieved if submitted is None else submitted
@@ -249,7 +256,8 @@ def _core(*, retrieved=("EV-1",), submitted=None, bridge=None):
     core._retrieval = _Retrieval(retrieved)
     core._build = _Builder(pack)
     core._core_adapter = _adapter(_Bridge() if bridge is None else bridge)
-    engines = {"gemini": _Engine("gemini"), "openai": _Engine("openai")}
+    core._execution_profile = STANDARD_GEMINI
+    engines = {"gemini": _Engine("gemini")}
     core._model_gateway = ModelGateway(engines)
     core._mive = _Mive()
     core._renderer = _Renderer()
@@ -304,9 +312,9 @@ def _no_engine(*args, **kwargs):
 
 
 # --------------------------------------------------------------------- #
-# T14-01  the gate sits between governance and the first engine
+# T14-01  the gate sits between governance and the (one, TASK 20) engine
 # --------------------------------------------------------------------- #
-def test_task14_t01_order_is_governance_then_materialize_then_both_engines(monkeypatch):
+def test_task14_t01_order_is_governance_then_materialize_then_the_one_engine(monkeypatch):
     order = []
     core, _, engines = _core(retrieved=("EV-1",))
 
@@ -325,11 +333,11 @@ def test_task14_t01_order_is_governance_then_materialize_then_both_engines(monke
 
     core.ask("Question", top_k=1)
 
+    # STANDARD_GEMINI/SINGLE (TASK 20): one engine only, no OpenAI stage.
     assert order == [
         "governance",
         "materialize",
         errors.STAGE_GEMINI,
-        errors.STAGE_OPENAI,
     ]
 
 
@@ -353,7 +361,6 @@ def test_task14_t02_materialization_failure_prevents_every_engine_call(monkeypat
 
     # fail-closed all the way down: no engine, no MIVE, no render, no AskResult
     assert engines["gemini"].calls == 0
-    assert engines["openai"].calls == 0
     assert core._mive.calls == 0
     assert core._renderer.calls == 0
 
@@ -373,7 +380,7 @@ def test_task14_t03_bridge_rejection_never_reaches_the_materializer(monkeypatch)
 
     assert str(excinfo.value) == "Runtime evidence bridge rejected: R1|R2"
     assert inputs == []
-    assert engines["gemini"].calls == engines["openai"].calls == 0
+    assert engines["gemini"].calls == 0
 
 
 def test_task14_t03b_gate_rejection_never_reaches_the_materializer(monkeypatch):
@@ -391,7 +398,7 @@ def test_task14_t03b_gate_rejection_never_reaches_the_materializer(monkeypatch):
 
     assert str(excinfo.value) == "Runtime admission gate rejected: blocked"
     assert inputs == []
-    assert engines["gemini"].calls == engines["openai"].calls == 0
+    assert engines["gemini"].calls == 0
 
 
 # --------------------------------------------------------------------- #
@@ -410,7 +417,7 @@ def test_task14_t04_operational_failure_never_reaches_the_materializer(monkeypat
 
     assert excinfo.value is boom  # identity, not merely the same type
     assert inputs == []
-    assert engines["gemini"].calls == engines["openai"].calls == 0
+    assert engines["gemini"].calls == 0
 
 
 # --------------------------------------------------------------------- #
@@ -500,7 +507,6 @@ def test_task14_t06_success_path_returns_the_unchanged_ask_result_shape(monkeypa
     }
     assert result.status == "success"
     assert engines["gemini"].calls == 1
-    assert engines["openai"].calls == 1
 
     # materialized, then deliberately dropped: no governed evidence is carried
     # into the result, in any field, at v0.1
@@ -553,7 +559,7 @@ def test_task14_t07b_only_materialization_errors_are_caught(monkeypatch):
         core.ask("Question", top_k=1)
 
     assert excinfo.value is boom
-    assert engines["gemini"].calls == engines["openai"].calls == 0
+    assert engines["gemini"].calls == 0
 
 
 # --------------------------------------------------------------------- #
@@ -567,7 +573,8 @@ def test_task14_t08_no_new_progress_event_is_emitted(monkeypatch):
     seen = []
     core.ask("Question", top_k=1, progress=lambda stage, status: seen.append((stage, status)))
 
-    # exact sequence equality: an added gate event would show up here
+    # exact sequence equality: an added gate event would show up here.
+    # STANDARD_GEMINI/SINGLE (TASK 20): no openai stage, no mive stage.
     assert seen == [
         ("retrieval", "started"),
         ("retrieval", "done"),
@@ -575,9 +582,5 @@ def test_task14_t08_no_new_progress_event_is_emitted(monkeypatch):
         ("context_pack", "done"),
         (errors.STAGE_GEMINI, "started"),
         (errors.STAGE_GEMINI, "done"),
-        (errors.STAGE_OPENAI, "started"),
-        (errors.STAGE_OPENAI, "done"),
-        ("mive", "started"),
-        ("mive", "done"),
         ("answer", "ready"),
     ]

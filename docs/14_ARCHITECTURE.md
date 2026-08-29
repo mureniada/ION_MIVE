@@ -50,19 +50,21 @@ Two parts inside one container:
 
 **API layer** — a thin REST (and DEBUG-only SSE) surface over the core. It translates HTTP to core calls and core results to HTTP. It contains no reasoning.
 
-**Core (orchestrator)** — the single hub. It owns the pipeline order and nothing else:
+**Core (orchestrator)** — the single hub. It owns the pipeline order and nothing else. WHICH engine(s) execute, and whether a comparison stage runs, is governed by the active **Model Execution Profile** (TASK 20) the core was composed with — never a hardcoded literal:
 
 ```
 question
-  → retrieval module        (evidence)
+  → retrieval module         (evidence)
   → build Context Pack       (canonical, shared)
-  → gemini_ive module  ┐     (independent, parallel)
-  → openai_ive module  ┘
-  → validate IVE reports
-  → mive module              (comparison)
-  → renderer                 (human-readable result)
-  → telemetry module         (usage, latency, cost)
+  → execution profile        (STANDARD_GEMINI / SINGLE — the first live profile)
+  → gemini_ive module        (the one engine SINGLE authorizes)
+  → validate IVE report
+  → mive module               (comparison — SKIPPED under SINGLE; not applicable)
+  → renderer                  (SINGLE path: no comparison claim)
+  → telemetry module          (usage, latency, cost)
 ```
+
+STANDARD_GEMINI/SINGLE is the first, and currently only, live profile: it authorizes exactly one engine (Gemini) and does not invoke MIVE. MIVE remains a fully implemented, frozen two-report comparison component — the diagram above is not a claim that a dual-engine profile is currently implemented, only that MIVE remains **available** for a future profile that explicitly requests comparison semantics; the historical dual-engine (`gemini_ive` + `openai_ive` in parallel, feeding `mive`) shape was this repository's pre-TASK-20 fixed policy and is preserved here only as the general shape a future comparison-requesting profile would still use, not as the current default.
 
 The core calls modules **only through their interfaces**. It does not know which SDK, vector store, or model a module uses.
 

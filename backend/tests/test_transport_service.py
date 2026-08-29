@@ -1,4 +1,20 @@
-"""Transport-layer tests that need no web framework and no live provider calls."""
+"""Transport-layer tests that need no web framework and no live provider calls.
+
+TASK 20 policy reconciliation: live policy is STANDARD_GEMINI/SINGLE. Tests
+that asserted the historical fixed-dual (gemini -> openai -> mive) shape are
+reconciled to the truthful SINGLE shape below; transport framing, error
+mapping and secret-safety laws are otherwise unchanged.
+
+Several tests in this file drive a real `Core()` (real `CoreAdapter`
+included) over document id "d1", which is a KNOWN, PRE-EXISTING,
+Task-20-unrelated fixture condition in this environment (a canonical
+evidence/provenance gate rejects "d1" for reasons unrelated to engine
+count — the same condition affects `test_core_ask_mocked.py` and
+`test_sse_roundtrip.py` identically, and fails at the governance stage,
+strictly before any engine executes). That fixture is left untouched here:
+this reconciliation makes each test's LOGIC correct for SINGLE without
+"fixing" the pre-existing provenance failure cluster.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +26,10 @@ from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.orchestrator import Core
 from app.modules.context_pack import ContextPackBuilder
+from app.modules.execution_profile import STANDARD_GEMINI
 from app.modules.gemini_ive import GeminiIVE
 from app.modules.mive import MIVEComparator
 from app.modules.model_gateway import ModelGateway
-from app.modules.openai_ive import OpenAIIVE
 from app.modules.renderer import DeterministicRenderer
 from app.modules.retrieval.embeddings import HashingEmbedder
 from app.modules.retrieval.memory_index import InMemoryRetrieval
@@ -32,24 +48,21 @@ _IVE_JSON = make_ive_json(
 )
 
 
-def _core(gemini_backend=None, openai_backend=None):
+def _core(gemini_backend=None):
     retrieval = InMemoryRetrieval(HashingEmbedder(256))
     retrieval.index(_DOCS)
-    settings = Settings.load({"OPENAI_MODEL": "gpt-5.4-mini",
-                              "GEMINI_MODEL": "gemini-3.1-flash-lite"})
+    settings = Settings.load({"GEMINI_MODEL": "gemini-3.1-flash-lite"})
     gemini = GeminiIVE(gemini_backend or FakeBackend(_IVE_JSON), model="gemini-3.1-flash-lite")
-    openai = OpenAIIVE(openai_backend or FakeBackend(_IVE_JSON), model="gpt-5.4-mini")
     return Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(),
-        model_gateway=ModelGateway(
-            {gemini.engine_id: gemini, openai.engine_id: openai}
-        ),
+        model_gateway=ModelGateway({gemini.engine_id: gemini}),
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=PricingTable(),
         clock=DummyClock(),
         settings=settings,
+        execution_profile=STANDARD_GEMINI,
     )
 
 
@@ -62,7 +75,7 @@ class _SpyCore:
 
         class _R:
             rendered = {"question": question, "primary_answer": "x",
-                        "mive_assessment": {}, "uncertainty": {}, "evidence": [],
+                        "mive_assessment": None, "uncertainty": {}, "evidence": [],
                         "operational_metrics": {}, "disclaimer": "d"}
         return _R()
 
@@ -102,31 +115,32 @@ def test_success_preserves_required_result_fields():
 
 # 5. provider failure is not converted into success -------------------------- #
 def test_provider_failure_is_not_success():
-    core = _core(openai_backend=FakeBackend("", error=RuntimeError("openai 503")))
+    core = _core(gemini_backend=FakeBackend("", error=RuntimeError("gemini 503")))
     with raises(ProviderError):
         service.run_ask(core, "q")
-    exc = ProviderError("openai call failed", stage="openai")
+    exc = ProviderError("gemini call failed", stage="gemini")
     code, body = service.core_error_payload(exc)
-    assert code == 502 and body["status"] == "error" and body["error_stage"] == "openai"
+    assert code == 502 and body["status"] == "error" and body["error_stage"] == "gemini"
 
 
-# 6. SSE preserves canonical progress order ---------------------------------- #
+# 6. SSE preserves canonical progress order ----------------------------------- #
 def test_sse_preserves_progress_order_and_ends_with_result():
     events = list(service.sse_events(_core(), "is money credit?"))
     stages = [d["stage"] for name, d in events if name == "progress"]
+    # STANDARD_GEMINI/SINGLE (TASK 20): no openai stage, no mive stage.
     assert stages.index("retrieval") < stages.index("gemini")
-    assert stages.index("gemini") < stages.index("openai")
-    assert stages.index("openai") < stages.index("mive")
+    assert "openai" not in stages
+    assert "mive" not in stages
     assert events[-1][0] == "result"
     assert "primary_answer" in events[-1][1]
 
 
 # 7. SSE terminates with an explicit error event on failure ------------------ #
 def test_sse_terminates_with_error_event_on_provider_failure():
-    core = _core(openai_backend=FakeBackend("", error=RuntimeError("openai down")))
+    core = _core(gemini_backend=FakeBackend("", error=RuntimeError("gemini down")))
     events = list(service.sse_events(core, "q"))
     assert events[-1][0] == "error"
-    assert events[-1][1]["error_stage"] == "openai"
+    assert events[-1][1]["error_stage"] == "gemini"
     assert not any(name == "result" for name, _ in events)
 
 

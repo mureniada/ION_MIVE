@@ -3,15 +3,23 @@
 It depends on ports and on ONE provider-neutral model execution boundary, the
 Model Gateway. It names no concrete engine implementation and holds no
 provider-named execution dependency: it asks the Gateway for one explicitly
-identified target at a time. Which targets a turn asks for, and in what order,
-is still stated here, in the two literal calls below — that is caller policy a
-later, separately authorized layer will own, not execution mechanics.
+identified target at a time. WHICH targets a turn asks for, and in what order,
+is CALLER POLICY — stated not as a literal here but as the immutable
+`ExecutionProfile` this Core was constructed with (TASK 20). The Gateway
+still executes only the target it is handed; Core still decides which
+target(s) to hand it, and now reads that decision from policy data instead
+of a literal.
 
-It runs the two IVE engines independently, each seeing ONLY the governed
-`ModelContextAssembly` materialized for this turn (TASK 19.3) — never the
-upstream `ContextPack` directly, and never another engine's output — then
-MIVE, then the renderer, then telemetry. A single provider failure yields an
-incomplete MIVE state — never a success (docs/06).
+Each engine execution sees ONLY the governed `ModelContextAssembly`
+materialized for this turn (TASK 19.3) — never the upstream `ContextPack`
+directly, and never another engine's output. TASK 20 v0.1 implements exactly
+one execution mode, SINGLE: one engine, one `IVEReport`, and MIVE comparison
+is NOT APPLICABLE — never invoked, never simulated, never represented as a
+successful comparison of one report with itself. MIVE remains implemented
+and frozen as a genuine two-report comparison mechanism for a future profile
+that explicitly requests it; this Core simply does not call it under the one
+profile that exists today. A single provider failure still yields no
+success, single-engine or otherwise (docs/06).
 
 Progress is reported through an optional callback so the API layer can drive the
 DEBUG-gated SSE stream without the core knowing anything about transport.
@@ -31,6 +39,7 @@ from ..modules.core_adapter import (
     CoreAdapterRequest,
     CoreInvocationMode,
 )
+from ..modules.execution_profile import ExecutionMode, ExecutionProfile
 from ..modules.governed_evidence import (
     GovernedEvidenceMaterializationError,
     GovernedEvidenceSet,
@@ -46,6 +55,7 @@ from ..modules.model_context import (
 from ..modules.model_gateway import ModelGateway
 from ..modules.telemetry.pricing import PRICING_AS_OF
 from ..modules.turn_record import (
+    ExecutionProfileBinding,
     ModelExecutionBinding,
     TurnConfigurationBinding,
     TurnFailure,
@@ -145,6 +155,7 @@ class Core:
         pricing: PricingPort,
         clock: ClockPort,
         settings: Settings,
+        execution_profile: ExecutionProfile,
     ) -> None:
         self._retrieval = retrieval
         self._build = context_pack_builder
@@ -154,7 +165,19 @@ class Core:
         self._pricing = pricing
         self._clock = clock
         self._settings = settings
+        self._execution_profile = execution_profile
         self._core_adapter = CoreAdapter()
+
+    @property
+    def execution_profile(self) -> ExecutionProfile:
+        """The immutable Model Execution Profile this Core was composed with.
+
+        Read-only composition surface, for the readiness gate to check the
+        SAME resolved profile Core itself executes under (no independent
+        re-resolution) — never exposed on `AskResult` or any transport
+        payload (D20-12).
+        """
+        return self._execution_profile
 
     def ask(
         self,
@@ -296,39 +319,40 @@ class Core:
             # Builder, so it has no path into the object the engines receive.
             model_input = self._materialize_model_context(governed_evidence, pack, q)
 
-            # --- independent IVE runs (neither sees the other) ---
-            # The two engine identities below are CALLER POLICY, stated here and
-            # nowhere else: the Gateway executes the target it is handed and
-            # never chooses one. Deliberately two literal statements rather than
-            # a loop over a collection — a collection would already be the
-            # execution-policy layer this phase does not implement. Both engines
-            # receive the SAME `model_input` object — never the upstream ContextPack.
-            gemini_report = self._run_engine("gemini", model_input, errors.STAGE_GEMINI, emit)
-            completed_reports = (gemini_report,)
-            openai_report = self._run_engine("openai", model_input, errors.STAGE_OPENAI, emit)
-            completed_reports = (gemini_report, openai_report)
+            # --- engine execution, from POLICY, not a literal (TASK 20) ---
+            # WHICH engine(s) run, and in what order, is the active
+            # `ExecutionProfile`'s decision, stated as data this Core was
+            # constructed with — never a literal engine name written here, and
+            # never a loop over a collection Core invented on its own. v0.1
+            # implements exactly one mode: SINGLE runs exactly the one engine
+            # the profile names. The branch below fails closed for any other
+            # mode; no such mode exists yet for any profile this Product
+            # resolves, so it is unreachable today and stays that way until a
+            # later, separately authorized phase actually implements one.
+            profile = self._execution_profile
+            if profile.mode is not ExecutionMode.SINGLE:
+                raise errors.ConfigurationError(
+                    f"unsupported execution mode: {profile.mode!r}"
+                )
+            engine_id = profile.engine_ids[0]
+            # The engine's own identity IS the existing stage value for every
+            # engine this Product currently resolves ("gemini"): no new stage
+            # vocabulary is introduced, and no mapping table stands between
+            # policy and the progress/error stage it produces.
+            report = self._run_engine(engine_id, model_input, engine_id, emit)
+            completed_reports = (report,)
 
-            # --- MIVE ---
-            emit("mive", "started")
-            t = self._clock.monotonic_ms()
-            try:
-                mive_result = self._mive.compare([gemini_report, openai_report])
-            except errors.IonError:
-                raise
-            except Exception as exc:
-                raise errors.MiveError(f"MIVE comparison failed: {exc}") from exc
-            comparison_ms = self._clock.monotonic_ms() - t
-            emit("mive", "done")
-            # Serialized once here and reused below, so the comparison outcome is
-            # a held fact from the moment MIVE completes — a turn that fails
-            # afterwards can still record what the comparison concluded.
-            mive_dict = mive_result.to_dict()
-            mive_status = mive_dict["overall_status"]
+            # --- comparison: NOT APPLICABLE under SINGLE (TASK 20 / D20-01) ---
+            # SINGLE authorizes exactly one engine. MIVE compares two
+            # independent reports and is never invoked here: no call, no
+            # timer, no synthetic result, no fabricated agreement. `mive_dict`
+            # and `mive_status` stay at their ABSENT initial value (None) —
+            # comparison not applicable is recorded as absence, never as a
+            # zero-duration measurement of a comparison that did not run.
+            mive_dict = None
 
             # --- telemetry ---
-            provider_metrics = [
-                self._provider_metrics(r) for r in (gemini_report, openai_report)
-            ]
+            provider_metrics = [self._provider_metrics(report)]
             completed_metrics = tuple(provider_metrics)
             costs = [p.estimated_cost for p in provider_metrics]
             total_cost = None if any(c is None for c in costs) else round(sum(costs), 8)
@@ -343,19 +367,23 @@ class Core:
                 context_characters=context_chars,
                 context_documents=len(pack.documents),
                 retrieval_latency_ms=round(retrieval_ms, 3),
-                comparison_latency_ms=round(comparison_ms, 3),
+                comparison_latency_ms=None,
                 total_latency_ms=round(total_ms, 3),
                 providers=provider_metrics,
                 total_estimated_cost=total_cost,
                 status="success",
             )
 
-            # --- render (deterministic) ---
-            rendered = self._renderer.render(
+            # --- render (deterministic, SINGLE path) ---
+            # `model_input.evidence` — the SAME Model Context evidence the
+            # executed engine itself received — is the ONLY evidence basis the
+            # renderer may resolve this report's citations against (D20-20):
+            # never the broader `evidence` list retrieval returned, which may
+            # include candidates governance never admitted into model input.
+            rendered = self._renderer.render_single(
                 question=q,
-                mive_result=mive_result,
-                reports=[gemini_report, openai_report],
-                evidence=evidence,
+                report=report,
+                authorized_evidence_basis=model_input.evidence,
                 metrics_dict=metrics.to_dict(),
             )
 
@@ -379,14 +407,14 @@ class Core:
                 question=q,
                 governed_basis=governed_evidence,
                 pack=pack,
-                reports=(gemini_report, openai_report),
+                reports=(report,),
                 provider_metrics=provider_metrics,
-                mive_overall_status=mive_status,
+                mive_overall_status=None,
                 effective_top_k=k,
                 turn_started_at=adapter_created_at,
                 turn_closed_at=turn_closed_at,
                 retrieval_latency_ms=retrieval_ms,
-                comparison_latency_ms=comparison_ms,
+                comparison_latency_ms=None,
                 pipeline_latency_ms=total_ms,
             )
 
@@ -398,7 +426,7 @@ class Core:
                 status="success",
                 rendered=rendered,
                 mive_result=mive_dict,
-                ive_reports=[gemini_report.to_contract_dict(), openai_report.to_contract_dict()],
+                ive_reports=[report.to_contract_dict()],
                 metrics=metrics.to_dict(),
             )
 
@@ -597,6 +625,24 @@ class Core:
             retrieval_latency_ms=retrieval_latency_ms,
             comparison_latency_ms=comparison_latency_ms,
             pipeline_latency_ms=pipeline_latency_ms,
+            execution_profile=self._execution_profile_binding(),
+        )
+
+    def _execution_profile_binding(self) -> ExecutionProfileBinding:
+        """Bind this Core's own active policy identity, for provenance only.
+
+        The active `ExecutionProfile` is known from construction, before any
+        turn starts, so it is available for EVERY closure this Core produces
+        — COMPLETED or FAILED alike, however early a turn fails. Turn Record
+        never imports `execution_profile`; this method reads Core's own
+        already-resolved profile and hands the materializer only the plain
+        string values its local binding type accepts.
+        """
+        profile = self._execution_profile
+        return ExecutionProfileBinding(
+            profile_id=profile.profile_id,
+            profile_version=profile.profile_version,
+            mode=profile.mode.value,
         )
 
     def _materialize_failed_turn_record(
@@ -654,6 +700,11 @@ class Core:
             retrieval_latency_ms=retrieval_latency_ms,
             comparison_latency_ms=comparison_latency_ms,
             pipeline_latency_ms=pipeline_latency_ms,
+            # The active profile is known from Core construction, before any
+            # turn starts, so it is bound even on the earliest possible
+            # failure (§26): failure of the sole configured engine still
+            # truthfully records WHICH policy authorized that one attempt.
+            execution_profile=self._execution_profile_binding(),
         )
 
     def _run_engine(

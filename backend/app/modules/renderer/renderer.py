@@ -127,3 +127,77 @@ class DeterministicRenderer:
             for doc_id in u.get("evidence_document_ids", []):
                 add(doc_id, u.get("statement", "unique finding"))
         return rows
+
+    # ----------------------------------------------------------------- #
+    # SINGLE execution profile path (TASK 20) — comparison not applicable.
+    # ----------------------------------------------------------------- #
+    def render_single(
+        self,
+        *,
+        question: str,
+        report: IVEReport,
+        authorized_evidence_basis,
+        metrics_dict: dict,
+    ) -> dict:
+        """Render one engine's report, truthfully, with no comparison claim.
+
+        `authorized_evidence_basis` is accepted structurally — this module
+        never imports the package that defines its item type — and is the
+        ONLY source consulted when resolving the report's own citations. It
+        must be exactly the evidence set the executed engine itself received,
+        never a broader retrieved-candidate list: a citation id absent from
+        this basis is excluded outright, never looked up elsewhere.
+
+        `mive_assessment` is `None` here, not an empty comparison-shaped
+        dict: no comparison ran, and an empty `{"agreements": [], ...}` would
+        misstate that one was attempted and found nothing.
+        """
+        return {
+            "question": question,
+            "primary_answer": report.abstract,
+            "mive_assessment": None,
+            "uncertainty": self._single_uncertainty(report),
+            "evidence": self._single_evidence_section(report, authorized_evidence_basis),
+            "operational_metrics": metrics_dict,
+            "disclaimer": (
+                f"This response was produced by a single configured model execution "
+                f"({report.engine_id}). No second, independent model interpretation "
+                "was run for this turn, so no cross-model agreement, disagreement, "
+                "or consensus claim applies."
+            ),
+        }
+
+    @staticmethod
+    def _single_uncertainty(report: IVEReport) -> dict:
+        return {"reported": list(report.uncertainty)}
+
+    @staticmethod
+    def _single_evidence_section(report: IVEReport, authorized_evidence_basis) -> list[dict]:
+        # Structural, duck-typed read: each item is expected to carry
+        # `candidate_id`, `content`, `title`, `source_identity`, `page` and
+        # `chunk_id` — the exact fields the executed engine itself received.
+        index = {item.candidate_id: item for item in authorized_evidence_basis}
+        rows: list[dict] = []
+        seen: set[str] = set()
+        for claim in report.claims:
+            for doc_id in claim.evidence_document_ids:
+                if doc_id in seen:
+                    continue
+                item = index.get(doc_id)
+                if item is None:
+                    # Cited by the report but not in the authorized basis —
+                    # excluded outright, never resolved against anything wider.
+                    continue
+                seen.add(doc_id)
+                rows.append(
+                    {
+                        "document_id": item.candidate_id,
+                        "title": item.title,
+                        "source": item.source_identity,
+                        "page": item.page,
+                        "chunk_id": item.chunk_id,
+                        "excerpt": item.content[:_EXCERPT_CHARS].strip(),
+                        "claim_linkage": claim.statement,
+                    }
+                )
+        return rows

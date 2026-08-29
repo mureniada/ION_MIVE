@@ -41,7 +41,7 @@ Question
 5. Both models receive the same canonical Context Pack.
 6. Evidence is stronger than confidence.
 7. MIVE compares reports; it does not silently replace them with a third answer.
-8. A one-model fallback is not a successful MIVE result.
+8. A one-model fallback is not a successful MIVE result. **Accepted interpretation (D20-00, TASK 20):** a *deliberately configured* single-engine Model Execution Profile (e.g. STANDARD_GEMINI / mode SINGLE) is not a "fallback" in the sense of this invariant — it may produce a successful Product turn consisting of one `IVEReport` and no MIVE result, with that absence recorded truthfully as comparison-not-applicable, never as a successful MIVE result. This does not relax the invariant for a degraded case: if a multi-engine execution was intended and unexpectedly completes with only one engine succeeding, that remains a failed/incomplete MIVE state and must never be silently reclassified as a configured SINGLE turn.
 9. Secrets must never be committed or printed.
 10. The frontend must remain a thin client over a tested backend, reachable only through the REST API. It contains no ION reasoning, retrieval, or comparison logic.
 11. No scope expansion before the local acceptance criteria pass.

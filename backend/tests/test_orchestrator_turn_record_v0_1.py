@@ -28,6 +28,7 @@ from app.core.models import AskResult
 import app.core.orchestrator as orch
 import app.modules.core_adapter.facade as facade
 from app.modules.core_adapter import CoreAdapter
+from app.modules.execution_profile import STANDARD_GEMINI
 from app.modules.governed_evidence import (
     GovernedEvidenceMaterializationError,
     GovernedEvidenceSet,
@@ -39,12 +40,13 @@ VERIFIED = "VERIFIED"
 PENDING = "PENDING"
 PASS = "PASS"
 
-# The models the two engine stand-ins are CONFIGURED with. Named once so the
-# construction below and the requested-model assertion read the same fact from
-# the same place; Core holds no provider-named engine field to read it back
-# from now that execution goes through the Model Gateway.
+# The model the one live engine stand-in is CONFIGURED with (TASK 20:
+# STANDARD_GEMINI/SINGLE names "gemini" only — OpenAI is never registered).
+# Named once so the construction below and the requested-model assertion
+# read the same fact from the same place; Core holds no provider-named
+# engine field to read it back from now that execution goes through the
+# Model Gateway.
 GEMINI_MODEL = "gemini-3.1-flash-lite"
-OPENAI_MODEL = "gpt-5.4-mini"
 
 
 # --------------------------------------------------------------------- #
@@ -179,6 +181,13 @@ class _Renderer:
             self.iso_calls_at_render = self._clock.iso_calls
         return {"primary_answer": "answer"}
 
+    def render_single(self, **kwargs):
+        # Core (TASK 20) calls only this path today; kept behaviourally
+        # identical to `render` above so every existing assertion about
+        # render ordering, error propagation and the ISO-clock reading at
+        # render time continues to observe the same facts.
+        return self.render(**kwargs)
+
 
 class _Pricing:
     def __init__(self, error=None):
@@ -276,11 +285,18 @@ def _settings():
 
 def _core(
     *, retrieved=("EV-1", "EV-2", "EV-3"), submitted=("EV-1", "EV-2"),
-    bridge=None, order=None, gemini_error=None, openai_error=None,
+    bridge=None, order=None, gemini_error=None,
     renderer_error=None, retrieval_error=None, builder_error=None,
     mive_error=None, pricing_error=None, clock=None,
 ):
-    """A real Core over stand-ins: only the seams are fake, ask() is genuine."""
+    """A real Core over stand-ins: only the seams are fake, ask() is genuine.
+
+    Live policy (TASK 20) is STANDARD_GEMINI/SINGLE: the Gateway registers
+    "gemini" only — never "openai" — matching production composition exactly
+    (D20-10). `mive_error` is accepted for backward fixture compatibility but
+    has no effect: SINGLE never calls `self._mive.compare(...)`, so the
+    `_Mive` stand-in below is constructed but unreachable.
+    """
     pack = _pack(submitted)
     clock = _Clock() if clock is None else clock
     renderer = _Renderer(order=order, clock=clock, error=renderer_error)
@@ -291,14 +307,12 @@ def _core(
     core._retrieval = _Retrieval(retrieved, error=retrieval_error)
     core._build = _Builder(pack, error=builder_error)
     core._core_adapter = _adapter(_Bridge() if bridge is None else bridge)
-    # The stand-ins are registered in a real ModelGateway — the same
-    # provider-neutral boundary production uses — under the identity each one
+    core._execution_profile = STANDARD_GEMINI
+    # The stand-in is registered in a real ModelGateway — the same
+    # provider-neutral boundary production uses — under the identity it
     # states about itself. Only the seam changes; ask() is still genuine.
     core._model_gateway = ModelGateway(
-        {
-            "gemini": _Engine("gemini", "gemini", GEMINI_MODEL, error=gemini_error),
-            "openai": _Engine("openai", "openai", OPENAI_MODEL, error=openai_error),
-        }
+        {"gemini": _Engine("gemini", "gemini", GEMINI_MODEL, error=gemini_error)}
     )
     core._mive = _Mive(order=order, error=mive_error)
     core._renderer = renderer
@@ -425,7 +439,8 @@ def test_t18_r03_r04_record_is_materialized_after_the_gate_and_after_render(monk
 
     core.ask("Question", top_k=3)
 
-    assert order == ["governance", "governed_evidence", "mive", "render", "turn_record"]
+    # MIVE no longer appears: SINGLE never invokes it (TASK 20 / D20-01)
+    assert order == ["governance", "governed_evidence", "render", "turn_record"]
 
 
 def test_t18_r04b_a_failing_renderer_closes_the_turn_as_failed(monkeypatch):
@@ -494,9 +509,15 @@ def test_t18_r06_context_pack_id_matches_the_real_context_pack(monkeypatch):
 
 
 # --------------------------------------------------------------------- #
-# T18-R07 / T18-R08  both executions are represented truthfully
+# T18-R07 / T18-R08  the one SINGLE execution is represented truthfully
+#
+# TASK 20 policy reconciliation: STANDARD_GEMINI/SINGLE runs exactly one
+# engine, so the historical "both executions" shape no longer occurs on any
+# live policy. This test now proves the SAME underlying law — the record's
+# executions agree exactly with the Product's own telemetry — for the one
+# execution that actually happens.
 # --------------------------------------------------------------------- #
-def test_t18_r07_r08_both_model_executions_are_recorded_truthfully(monkeypatch):
+def test_t18_r07_r08_the_single_model_execution_is_recorded_truthfully(monkeypatch):
     core, _, _, _ = _core()
     _patch_gate(monkeypatch, ("EV-1", "EV-2"))
     _spy_governed(monkeypatch)
@@ -505,18 +526,12 @@ def test_t18_r07_r08_both_model_executions_are_recorded_truthfully(monkeypatch):
     result = core.ask("Question", top_k=3)
     executions = outputs[0].model_executions
 
-    assert len(executions) == 2
-    assert [e.engine_id for e in executions] == ["gemini", "openai"]
-    assert [e.provider for e in executions] == ["gemini", "openai"]
-    # the models the adapters were actually configured with, in order
-    assert [e.requested_model for e in executions] == [
-        GEMINI_MODEL,
-        OPENAI_MODEL,
-    ]
-    assert [e.requested_model for e in executions] == [
-        "gemini-3.1-flash-lite",
-        "gpt-5.4-mini",
-    ]
+    assert len(executions) == 1
+    assert [e.engine_id for e in executions] == ["gemini"]
+    assert [e.provider for e in executions] == ["gemini"]
+    # the model the adapter was actually configured with
+    assert [e.requested_model for e in executions] == [GEMINI_MODEL]
+    assert [e.requested_model for e in executions] == ["gemini-3.1-flash-lite"]
 
     # the figures agree with the Product's own telemetry for the same turn
     for execution, reported in zip(executions, result.metrics["providers"], strict=True):
@@ -531,6 +546,32 @@ def test_t18_r07_r08_both_model_executions_are_recorded_truthfully(monkeypatch):
     # no provider-reported model identity is claimed anywhere
     for execution in executions:
         assert not hasattr(execution, "reported_model")
+
+    # no OpenAI execution exists at all — not merely absent from this list
+    assert [e.engine_id for e in executions] != ["openai"]
+    assert not any(e.engine_id == "openai" for e in executions)
+
+
+# --------------------------------------------------------------------- #
+# TASK 20 — the live record truthfully binds STANDARD_GEMINI / 0.1 / SINGLE,
+# and comparison is recorded as NOT APPLICABLE, never as a failure or a
+# zero-duration measurement.
+# --------------------------------------------------------------------- #
+def test_t20_the_completed_record_binds_the_live_standard_gemini_profile(monkeypatch):
+    core, _, _, _ = _core()
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    _spy_governed(monkeypatch)
+    _, outputs = _spy_turn_record(monkeypatch)
+
+    core.ask("Question", top_k=3)
+    record = outputs[0]
+
+    assert record.execution_profile is not None
+    assert record.execution_profile.profile_id == "STANDARD_GEMINI"
+    assert record.execution_profile.profile_version == "0.1"
+    assert record.execution_profile.mode == "SINGLE"
+    assert record.mive_overall_status is None
+    assert record.comparison_latency_ms is None
 
 
 # --------------------------------------------------------------------- #
@@ -580,7 +621,9 @@ def test_t18_r11_r12_the_progress_stream_is_byte_identical(monkeypatch):
     seen = []
     core.ask("Question", top_k=3, progress=lambda stage, status: seen.append((stage, status)))
 
-    # exact sequence equality: a new closure event would show up here
+    # exact sequence equality: a new closure event would show up here.
+    # STANDARD_GEMINI/SINGLE (TASK 20): no openai stage, no mive stage —
+    # those stages genuinely do not run, so no event for either is emitted.
     assert seen == [
         ("retrieval", "started"),
         ("retrieval", "done"),
@@ -588,13 +631,11 @@ def test_t18_r11_r12_the_progress_stream_is_byte_identical(monkeypatch):
         ("context_pack", "done"),
         (errors.STAGE_GEMINI, "started"),
         (errors.STAGE_GEMINI, "done"),
-        (errors.STAGE_OPENAI, "started"),
-        (errors.STAGE_OPENAI, "done"),
-        ("mive", "started"),
-        ("mive", "done"),
         ("answer", "ready"),
     ]
     assert not any("turn" in stage for stage, _ in seen)
+    assert not any(stage == errors.STAGE_OPENAI for stage, _ in seen)
+    assert not any(stage == "mive" for stage, _ in seen)
 
 
 # --------------------------------------------------------------------- #
@@ -702,13 +743,9 @@ def test_t18_r15_pipeline_latency_is_the_existing_pre_render_span(monkeypatch):
             lambda: _core(gemini_error=RuntimeError("gemini 503")), {}, id="F10-gemini",
         ),
         pytest.param(
-            lambda: _core(openai_error=RuntimeError("openai 503")), {}, id="F11-openai",
-        ),
-        pytest.param(
             lambda: _core(gemini_error=errors.NormalizationError("bad json")), {},
             id="F12-normalization",
         ),
-        pytest.param(lambda: _core(mive_error=RuntimeError("mive fault")), {}, id="F13-mive"),
         pytest.param(
             lambda: _core(pricing_error=RuntimeError("pricing fault")), {},
             id="F14-telemetry",
@@ -724,6 +761,14 @@ def test_t18_r16_every_ordinary_failure_closes_with_exactly_one_failed_record(
     """GAP-TURN-CLOSURE-01: every started ordinary turn now closes.
 
     Supersedes the TASK 18.2 expectation, which asserted no record at all.
+
+    TASK 20 policy reconciliation: "F11-openai" (the second engine fails) and
+    "F13-mive" (MIVE comparison fails) are REMOVED, not reconciled — under
+    STANDARD_GEMINI/SINGLE there is no second engine to fail and MIVE is
+    never invoked, so both scenarios are no longer reachable through
+    `core.ask()` at all. This is exactly the configured-SINGLE-vs-fallback
+    boundary (D20-00/§31): there is no code path left that could produce
+    either failure, not merely a weakened assertion about one.
     """
     core, _, _, _ = make()
     _patch_gate(monkeypatch, ("EV-1", "EV-2"))
@@ -900,50 +945,37 @@ def test_t18_r24_f10_has_a_governed_basis_and_no_completed_execution(monkeypatch
     assert record.failure.error_stage == errors.STAGE_GEMINI
 
 
-def test_t18_r25_f11_binds_only_the_completed_gemini_without_pricing(monkeypatch):
-    record, _ = _close(monkeypatch, openai_error=RuntimeError("openai 503"))
-
-    assert record.governed_evidence is not None
-    assert len(record.model_executions) == 1
-    gemini = record.model_executions[0]
-    assert gemini.engine_id == "gemini"
-    assert gemini.provider == "gemini"
-    assert gemini.requested_model == "gemini-3.1-flash-lite"
-    # observed usage is recorded; cost was never computed and is NOT computed here
-    assert gemini.input_tokens == 11
-    assert gemini.output_tokens == 5
-    assert gemini.latency_ms == 1.5
-    assert gemini.estimated_cost is None
-    # the engine that failed is named by the stage, never by a binding
-    assert record.failure.error_stage == errors.STAGE_OPENAI
-    assert [e.engine_id for e in record.model_executions] == ["gemini"]
+# T18-R25 (F11-openai) is REMOVED, not reconciled: STANDARD_GEMINI/SINGLE has
+# no second engine to fail, so "gemini completed, openai then failed" is not
+# a reachable shape through `core.ask()` any more (see T18-R16's docstring).
 
 
-def test_t18_r26_f13_f14_f15_record_progressively_more(monkeypatch):
-    # F13 — MIVE failed: both engines completed, no comparison outcome
-    record, _ = _close(monkeypatch, mive_error=RuntimeError("mive fault"))
-    assert len(record.model_executions) == 2
+def test_t18_r26_f14_f15_record_progressively_more(monkeypatch):
+    """TASK 20 policy reconciliation: F13-mive is REMOVED (MIVE is never
+    invoked under SINGLE, so a MIVE failure cannot occur); F14/F15 are
+    reconciled to the one execution SINGLE actually produces, and to
+    `mive_overall_status`/`comparison_latency_ms` staying None throughout —
+    not "held from a completed comparison" (there was never one to hold),
+    but truthfully absent because none applies.
+    """
+    # F14 — telemetry failed: the one execution is held without its cost;
+    # comparison was never applicable, so both comparison facts stay None
+    record, _ = _close(monkeypatch, pricing_error=RuntimeError("pricing fault"))
     assert record.mive_overall_status is None
     assert record.comparison_latency_ms is None
-    assert record.pipeline_latency_ms is None
-    assert record.failure.error_stage == errors.STAGE_MIVE
-
-    # F14 — telemetry failed: the comparison outcome is held, the span is not
-    record, _ = _close(monkeypatch, pricing_error=RuntimeError("pricing fault"))
-    assert record.mive_overall_status == "partial_agreement"
-    assert record.comparison_latency_ms is not None
     assert record.pipeline_latency_ms is None     # measured after telemetry
-    # both engines DID complete, so both are bound from their observed usage;
+    # the one engine DID complete, so it is bound from its observed usage;
     # pricing never succeeded, so cost is absent rather than computed here
-    assert len(record.model_executions) == 2
-    assert all(e.estimated_cost is None for e in record.model_executions)
-    assert all(e.input_tokens == 11 for e in record.model_executions)
+    assert len(record.model_executions) == 1
+    assert record.model_executions[0].estimated_cost is None
+    assert record.model_executions[0].input_tokens == 11
     assert record.failure.error_stage is None     # unguarded: no stage to claim
 
     # F15 — renderer failed: everything up to rendering is held
     record, _ = _close(monkeypatch, renderer_error=RuntimeError("render fault"))
-    assert len(record.model_executions) == 2
-    assert record.mive_overall_status == "partial_agreement"
+    assert len(record.model_executions) == 1
+    assert record.mive_overall_status is None
+    assert record.comparison_latency_ms is None
     assert record.pipeline_latency_ms is not None
     assert record.failure.error_stage is None     # no invented stage
     assert record.failure.error_type == "RuntimeError"
@@ -1007,13 +1039,21 @@ def test_t18_r29_a_base_exception_bypasses_the_failure_closure(monkeypatch):
 
 
 def test_t18_r30_a_failed_turn_emits_no_new_progress_event(monkeypatch):
-    core, _, _, _ = _core(mive_error=RuntimeError("mive fault"))
+    """TASK 20 policy reconciliation: MIVE is never invoked under SINGLE, so
+    a MIVE-stage failure can no longer occur (see T18-R16's docstring). The
+    renderer is the closest remaining post-execution failure point — it is
+    called after the one engine completes and emits no progress event of its
+    own even in the historical dual-engine design, so this still proves the
+    same law: a failed turn adds no new progress event beyond what already
+    ran.
+    """
+    core, _, _, _ = _core(renderer_error=RuntimeError("render fault"))
     _patch_gate(monkeypatch, ("EV-1", "EV-2"))
     _spy_governed(monkeypatch)
     _spy_both(monkeypatch)
 
     seen = []
-    with pytest.raises(errors.MiveError):
+    with pytest.raises(RuntimeError):
         core.ask("Question", top_k=3,
                  progress=lambda stage, status: seen.append((stage, status)))
 
@@ -1022,8 +1062,6 @@ def test_t18_r30_a_failed_turn_emits_no_new_progress_event(monkeypatch):
         ("retrieval", "started"), ("retrieval", "done"),
         ("context_pack", "started"), ("context_pack", "done"),
         (errors.STAGE_GEMINI, "started"), (errors.STAGE_GEMINI, "done"),
-        (errors.STAGE_OPENAI, "started"), (errors.STAGE_OPENAI, "done"),
-        ("mive", "started"),
     ]
     assert ("answer", "ready") not in seen
 

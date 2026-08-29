@@ -22,11 +22,15 @@ def test_format_then_parse_is_identity():
 
 
 def test_mocked_pipeline_stream_preserves_progress_order():
+    """TASK 20 policy reconciliation: live policy is STANDARD_GEMINI/SINGLE —
+    no openai stage, no mive stage."""
     from tests.test_transport_service import _core  # reuse the mocked core wiring
 
     frames = "".join(format_sse(e, d) for e, d in sse_events(_core(), "is money credit?"))
     parsed = list(parse_sse_stream(frames.split("\n")))
     stages = [d["stage"] for e, d in parsed if e == "progress"]
-    assert stages.index("retrieval") < stages.index("gemini") < stages.index("mive")
+    assert stages.index("retrieval") < stages.index("gemini")
+    assert "openai" not in stages
+    assert "mive" not in stages
     assert parsed[-1][0] == "result"
     assert "primary_answer" in parsed[-1][1]

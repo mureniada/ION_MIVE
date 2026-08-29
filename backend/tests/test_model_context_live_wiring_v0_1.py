@@ -43,6 +43,7 @@ from app.modules.model_context import (
     ModelContextBuildError,
     build_model_context,
 )
+from app.modules.execution_profile import STANDARD_GEMINI
 from app.modules.openai_ive import OpenAIIVE
 from app.modules.turn_record import TurnClosureState
 from tests.fakes import FakeBackend, make_ive_json
@@ -234,6 +235,10 @@ class _Renderer:
     def render(self, **kwargs):
         return {"primary_answer": "answer"}
 
+    def render_single(self, **kwargs):
+        # Core (TASK 20) calls only this path today.
+        return self.render(**kwargs)
+
 
 class _Pricing:
     def estimate_cost(self, model, input_tokens, output_tokens):
@@ -255,6 +260,9 @@ def _pack_for(document_ids):
 
 
 def _core(document_ids=("D1", "D2")):
+    """A real Core over stand-ins. Live policy (TASK 20) is STANDARD_GEMINI/
+    SINGLE: the Gateway registers "gemini" only, matching production
+    composition exactly (D20-10: OpenAI is never registered)."""
     pack = _pack_for(document_ids)
     core = orch.Core.__new__(orch.Core)
     core._settings = SimpleNamespace(
@@ -264,7 +272,8 @@ def _core(document_ids=("D1", "D2")):
     core._retrieval = _Retrieval(document_ids)
     core._build = _Builder(pack)
     core._core_adapter = _adapter()
-    engines = {"gemini": _Engine("gemini"), "openai": _Engine("openai")}
+    core._execution_profile = STANDARD_GEMINI
+    engines = {"gemini": _Engine("gemini")}
     from app.modules.model_gateway import ModelGateway
     core._model_gateway = ModelGateway(engines)
     core._mive = _Mive()
@@ -310,21 +319,30 @@ def test_t19_3_03_build_model_context_runs_after_ges_and_before_any_engine(monke
 
     core.ask("Question", top_k=1)
 
+    # STANDARD_GEMINI/SINGLE (TASK 20): one engine only, no "openai" entry
+    # ever appears in `order` because it is never registered or called.
     assert order.index("governed_evidence") < order.index("model_context")
     assert order.index("model_context") < order.index("gemini")
-    assert order.index("model_context") < order.index("openai")
+    assert "openai" not in order
 
 
-def test_t19_3_04_both_engines_receive_the_same_model_context_object(monkeypatch):
+def test_t19_3_04_the_one_engine_receives_the_real_model_context_object(monkeypatch):
+    """T19-3-04, reconciled for TASK 20 SINGLE.
+
+    Originally: both engines received the SAME ModelContextAssembly, by
+    identity. STANDARD_GEMINI/SINGLE runs exactly one engine, so "both
+    engines share an instance" no longer applies; the underlying law is
+    preserved for the one recipient that exists — it receives the real, live
+    ModelContextAssembly.
+    """
     core, pack, engines = _core()
     _patch_gate(monkeypatch, ("D1", "D2"))
 
     core.ask("Question", top_k=1)
 
     gemini_input = engines["gemini"].calls[0]
-    openai_input = engines["openai"].calls[0]
-    assert gemini_input is openai_input
     assert isinstance(gemini_input, ModelContextAssembly)
+    assert "openai" not in engines
 
 
 def test_t19_3_05_neither_engine_receives_the_original_context_pack(monkeypatch):

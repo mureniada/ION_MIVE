@@ -8,7 +8,8 @@ MIVE compares multiple independent IVE reports. It does not perform the original
 
 ## Minimum input
 
-Two valid IVE reports generated from:
+Whenever MIVE executes, its own contract is unchanged: two valid, distinct
+IVE reports generated from:
 - the same question;
 - the same canonical Context Pack;
 - independent provider executions.
@@ -16,6 +17,21 @@ Two valid IVE reports generated from:
 For version 1:
 - Gemini;
 - OpenAI.
+
+## MIVE invocation is profile-conditional (TASK 20)
+
+MIVE invocation is controlled by the active Model Execution Profile, not
+performed unconditionally on every turn. The first live profile,
+STANDARD_GEMINI (mode SINGLE), authorizes exactly one engine and does not
+invoke MIVE at all for the turns it governs — MIVE is NOT APPLICABLE to a
+SINGLE-mode turn, never a failed or degraded MIVE result, and never
+represented as one. A deliberately configured SINGLE profile is not a
+one-model fallback (CLAUDE.md); it is a distinct, legitimate Product policy
+that simply does not include a comparison stage. MIVE's own two-report,
+distinct-engine invariant above is never weakened or bypassed for any
+profile that DOES invoke it — a future profile that requests comparison
+semantics (e.g., a dual-engine profile) would call MIVE exactly as specified
+here, unchanged.
 
 ## Required comparison dimensions
 

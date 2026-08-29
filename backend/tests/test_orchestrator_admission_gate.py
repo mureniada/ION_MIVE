@@ -25,6 +25,7 @@ from app.core import errors
 import app.core.orchestrator as orch
 import app.modules.core_adapter.facade as facade
 from app.modules.core_adapter import CoreAdapter
+from app.modules.execution_profile import STANDARD_GEMINI
 
 
 REPO_ROOT = Path(os.environ["ION_REPO_ROOT"]).resolve()
@@ -169,6 +170,7 @@ def _core(bridge=None):
     core._retrieval = _Retrieval()
     core._build = _Builder(pack)
     core._core_adapter = _adapter(bridge)
+    core._execution_profile = STANDARD_GEMINI
     core._mive = object()
     core._renderer = object()
     core._pricing = object()
@@ -223,13 +225,11 @@ def _ordered_run(monkeypatch):
 
     def provider(engine, provider_pack, stage, emit):
         order.append(stage)
-        if order.count(errors.STAGE_OPENAI) == 1:
-            raise RuntimeError("stop-after-second-provider")
-        return object()
+        raise RuntimeError("stop-after-provider")
 
     core._run_engine = provider
 
-    with pytest.raises(RuntimeError, match="stop-after-second-provider"):
+    with pytest.raises(RuntimeError, match="stop-after-provider"):
         core.ask("Question", top_k=1)
 
     return order
@@ -240,9 +240,10 @@ def test_p5_18ab_t28_admission_gate_executes_before_gemini_ive(monkeypatch):
     assert order.index("gate") < order.index(errors.STAGE_GEMINI)
 
 
-def test_p5_18ab_t29_admission_gate_executes_before_openai_ive(monkeypatch):
-    order = _ordered_run(monkeypatch)
-    assert order.index("gate") < order.index(errors.STAGE_OPENAI)
+# T29 (admission gate executes before openai_ive) is REMOVED, not
+# reconciled: STANDARD_GEMINI/SINGLE (TASK 20) never reaches an OpenAI stage
+# at all, so there is no ordering left to prove against a stage that no
+# longer runs on any live policy.
 
 
 def test_p5_18ab_t30_admission_failure_prevents_both_provider_calls(monkeypatch):
@@ -263,35 +264,41 @@ def test_p5_18ab_t30_admission_failure_prevents_both_provider_calls(monkeypatch)
     assert str(excinfo.value) == "Runtime admission gate rejected: blocked"
 
 
-def test_p5_18ab_t31_all_pass_gate_permits_both_provider_call_attempts(monkeypatch):
+def test_p5_18ab_t31_all_pass_gate_permits_the_provider_call_attempt(monkeypatch):
+    """T31, reconciled for TASK 20 SINGLE.
+
+    Originally: a passing gate permitted BOTH provider call attempts.
+    STANDARD_GEMINI/SINGLE makes exactly one call attempt; the underlying law
+    — a passing gate genuinely permits the provider to be reached — is
+    preserved for the one attempt that now exists.
+    """
     core, _, _ = _core()
     provider_calls = []
 
     def provider(engine, pack, stage, emit):
         provider_calls.append((engine, pack, stage))
-        if len(provider_calls) == 2:
-            raise RuntimeError("stop-after-second-provider")
-        return object()
+        raise RuntimeError("stop-after-provider")
 
     _patch_gate(monkeypatch, _passing_gate)
     core._run_engine = provider
 
-    with pytest.raises(RuntimeError, match="stop-after-second-provider"):
+    with pytest.raises(RuntimeError, match="stop-after-provider"):
         core.ask("Question", top_k=1)
 
-    assert len(provider_calls) == 2
+    assert len(provider_calls) == 1
 
 
-def test_p5_18ab_t32_same_model_context_instance_reused_only_after_all_pass_gate(monkeypatch):
-    """T32, reconciled for TASK 19.3.
+def test_p5_18ab_t32_the_one_engine_receives_the_real_model_context_not_the_pack(monkeypatch):
+    """T32, reconciled for TASK 20 SINGLE (previously reconciled for TASK 19.3).
 
     Originally: both engines reused the SAME `ContextPack` instance the gate
-    itself saw. Since TASK 19.3, engines no longer receive the `ContextPack`
-    at all — only the governed `ModelContextAssembly` materialized after the
-    gate passes. The cross-engine canonical-input identity law this test
-    proved is NOT removed; it is strengthened: both engines still receive one
-    identical object, and that object is now additionally proven to be the
-    live `ModelContextAssembly`, never the upstream `ContextPack`.
+    itself saw. TASK 19.3 strengthened this to: both engines reused the SAME
+    live `ModelContextAssembly`, never the `ContextPack`. STANDARD_GEMINI/
+    SINGLE (TASK 20) narrows this further: there is exactly one engine now,
+    so "both engines share one instance" no longer applies — but the
+    underlying law survives intact for the one recipient that exists: it
+    receives the real, live `ModelContextAssembly`, never the upstream
+    `ContextPack` the admission gate saw.
     """
     core, pack, _ = _core()
     seen = {"gate": None, "providers": []}
@@ -302,9 +309,7 @@ def test_p5_18ab_t32_same_model_context_instance_reused_only_after_all_pass_gate
 
     def provider(engine, model_input, stage, emit):
         seen["providers"].append(model_input)
-        if len(seen["providers"]) == 2:
-            raise RuntimeError("stop-after-second-provider")
-        return object()
+        raise RuntimeError("stop-after-provider")
 
     _patch_gate(monkeypatch, gate)
     core._run_engine = provider
@@ -314,12 +319,10 @@ def test_p5_18ab_t32_same_model_context_instance_reused_only_after_all_pass_gate
 
     # the admission gate still sees the real, upstream Context Pack...
     assert seen["gate"] is pack
-    assert len(seen["providers"]) == 2
-    # ...but both engines receive the SAME materialized ModelContextAssembly,
-    # by identity — the cross-engine canonical-input law, strengthened — and
-    # it is NOT the Context Pack the gate saw: only admitted governed content
-    # may reach a provider (TASK 19.3).
-    assert seen["providers"][0] is seen["providers"][1]
+    assert len(seen["providers"]) == 1
+    # ...but the engine receives the live ModelContextAssembly, never the
+    # Context Pack the gate saw: only admitted governed content may reach a
+    # provider (TASK 19.3).
     assert all(item is not pack for item in seen["providers"])
     from app.modules.model_context import ModelContextAssembly
     assert all(isinstance(item, ModelContextAssembly) for item in seen["providers"])
