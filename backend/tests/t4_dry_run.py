@@ -72,6 +72,7 @@ from app.modules.local_layer.loader import load_fragments
 from app.modules.local_layer.pipeline import CONTROL_QUESTION, LocalLayerPaths
 from app.modules.local_layer.registry import load_registry
 from app.modules.mive import MIVEComparator
+from app.modules.model_gateway import ModelGateway
 from app.modules.openai_ive import OpenAIIVE
 from app.modules.renderer import DeterministicRenderer
 from app.modules.telemetry import pricing as pricing_module
@@ -352,17 +353,25 @@ def run_dry_run(store: Path, *, manifest_path: Path | None = None,
     builder = RecordingContextPackBuilder(
         ContextPackBuilder(char_budget=settings.context_char_budget))
 
+    # The wrapper still goes around the IVEPort; the wrapped engines are now
+    # registered in the Model Gateway under the identity each one delegates from
+    # its inner adapter, and the Gateway is what the Core is injected with.
+    observed_gemini = ObservingIVE(
+        GeminiIVE(gemini_backend, model=GEMINI_MODEL), observer=observer,
+        sequence=1, provider="gemini", requested_model=GEMINI_MODEL,
+        clock=call_clock, latency_source=RECORDED_SOURCE)
+    observed_openai = ObservingIVE(
+        OpenAIIVE(openai_backend, model=OPENAI_MODEL), observer=observer,
+        sequence=2, provider="openai", requested_model=OPENAI_MODEL,
+        clock=call_clock, latency_source=RECORDED_SOURCE)
+
     core = Core(
         retrieval=retrieval,
         context_pack_builder=builder,
-        gemini_ive=ObservingIVE(
-            GeminiIVE(gemini_backend, model=GEMINI_MODEL), observer=observer,
-            sequence=1, provider="gemini", requested_model=GEMINI_MODEL,
-            clock=call_clock, latency_source=RECORDED_SOURCE),
-        openai_ive=ObservingIVE(
-            OpenAIIVE(openai_backend, model=OPENAI_MODEL), observer=observer,
-            sequence=2, provider="openai", requested_model=OPENAI_MODEL,
-            clock=call_clock, latency_source=RECORDED_SOURCE),
+        model_gateway=ModelGateway({
+            observed_gemini.engine_id: observed_gemini,
+            observed_openai.engine_id: observed_openai,
+        }),
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=pricing_module.PricingTable(),

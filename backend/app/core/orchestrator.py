@@ -1,8 +1,15 @@
 """The core orchestrator: the single hub that owns the pipeline order.
 
-It depends only on ports. It calls the two IVE engines independently (each sees
-ONLY the Context Pack), then MIVE, then the renderer, then telemetry. A single
-provider failure yields an incomplete MIVE state — never a success (docs/06).
+It depends on ports and on ONE provider-neutral model execution boundary, the
+Model Gateway. It names no concrete engine implementation and holds no
+provider-named execution dependency: it asks the Gateway for one explicitly
+identified target at a time. Which targets a turn asks for, and in what order,
+is still stated here, in the two literal calls below — that is caller policy a
+later, separately authorized layer will own, not execution mechanics.
+
+It runs the two IVE engines independently (each sees ONLY the Context Pack),
+then MIVE, then the renderer, then telemetry. A single provider failure yields
+an incomplete MIVE state — never a success (docs/06).
 
 Progress is reported through an optional callback so the API layer can drive the
 DEBUG-gated SSE stream without the core knowing anything about transport.
@@ -28,6 +35,7 @@ from ..modules.governed_evidence import (
     MaterializationInput,
     materialize_governed_evidence_set,
 )
+from ..modules.model_gateway import ModelGateway
 from ..modules.telemetry.pricing import PRICING_AS_OF
 from ..modules.turn_record import (
     ModelExecutionBinding,
@@ -47,7 +55,6 @@ from .models import (
 from .ports import (
     ClockPort,
     ContextPackBuilderPort,
-    IVEPort,
     MIVEPort,
     PricingPort,
     RendererPort,
@@ -124,8 +131,7 @@ class Core:
         *,
         retrieval: RetrievalPort,
         context_pack_builder: ContextPackBuilderPort,
-        gemini_ive: IVEPort,
-        openai_ive: IVEPort,
+        model_gateway: ModelGateway,
         mive: MIVEPort,
         renderer: RendererPort,
         pricing: PricingPort,
@@ -134,8 +140,7 @@ class Core:
     ) -> None:
         self._retrieval = retrieval
         self._build = context_pack_builder
-        self._gemini = gemini_ive
-        self._openai = openai_ive
+        self._model_gateway = model_gateway
         self._mive = mive
         self._renderer = renderer
         self._pricing = pricing
@@ -271,9 +276,14 @@ class Core:
             )
 
             # --- independent IVE runs (neither sees the other) ---
-            gemini_report = self._run_engine(self._gemini, pack, errors.STAGE_GEMINI, emit)
+            # The two engine identities below are CALLER POLICY, stated here and
+            # nowhere else: the Gateway executes the target it is handed and
+            # never chooses one. Deliberately two literal statements rather than
+            # a loop over a collection — a collection would already be the
+            # execution-policy layer this phase does not implement.
+            gemini_report = self._run_engine("gemini", pack, errors.STAGE_GEMINI, emit)
             completed_reports = (gemini_report,)
-            openai_report = self._run_engine(self._openai, pack, errors.STAGE_OPENAI, emit)
+            openai_report = self._run_engine("openai", pack, errors.STAGE_OPENAI, emit)
             completed_reports = (gemini_report, openai_report)
 
             # --- MIVE ---
@@ -583,11 +593,20 @@ class Core:
         )
 
     def _run_engine(
-        self, engine: IVEPort, pack, stage: str, emit: ProgressCallback
+        self, engine_id: str, pack, stage: str, emit: ProgressCallback
     ) -> IVEReport:
+        """Run ONE explicitly identified engine through the Model Gateway.
+
+        This method remains the progress authority: the Gateway emits nothing,
+        so the stage lifecycle vocabulary and its order are unchanged. It also
+        remains the layer that maps a non-Product exception escaping an engine
+        onto the existing provider stage — the Gateway does not reinterpret
+        provider semantics, and this fallback is exactly the behaviour it had
+        before the boundary moved.
+        """
         emit(stage, "started")
         try:
-            report = engine.run(pack)
+            report = self._model_gateway.execute(engine_id, pack)
         except errors.IonError as exc:
             # keep a specific stage the adapter set; only fill an unknown one.
             if exc.stage == "unknown":

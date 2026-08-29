@@ -95,6 +95,7 @@ def test_post_ask_returns_complete_rendered_result_for_real_question():
     from app.modules.context_pack import ContextPackBuilder
     from app.modules.gemini_ive import GeminiIVE
     from app.modules.mive import MIVEComparator
+    from app.modules.model_gateway import ModelGateway
     from app.modules.openai_ive import OpenAIIVE
     from app.modules.retrieval.embeddings import HashingEmbedder
     from app.modules.retrieval.memory_index import InMemoryRetrieval
@@ -133,11 +134,14 @@ def test_post_ask_returns_complete_rendered_result_for_real_question():
     fake_renderer.render.return_value = sentinel
 
     settings = Settings.load({"OPENAI_MODEL": "gpt-test", "GEMINI_MODEL": "gemini-test"})
+    gemini = GeminiIVE(gem_backend, model="gemini-test")
+    openai = OpenAIIVE(openai_backend, model="gpt-test")
     fake_core = Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(char_budget=settings.context_char_budget),
-        gemini_ive=GeminiIVE(gem_backend, model="gemini-test"),
-        openai_ive=OpenAIIVE(openai_backend, model="gpt-test"),
+        model_gateway=ModelGateway(
+            {gemini.engine_id: gemini, openai.engine_id: openai}
+        ),
         mive=MIVEComparator(),
         renderer=fake_renderer,
         pricing=PricingTable(),

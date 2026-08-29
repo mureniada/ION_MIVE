@@ -33,6 +33,7 @@ from app.modules.governed_evidence import (
     GovernedEvidenceSet,
     MaterializationInput,
 )
+from app.modules.model_gateway import ModelGateway
 
 
 VERIFIED = "VERIFIED"
@@ -103,7 +104,11 @@ class _Bridge:
 
 
 class _Engine:
+    # `engine_id` is the identity the Model Gateway registers this stand-in
+    # under, stated by the engine itself exactly as a real adapter states it
+    # (core/ports.py IVEPort). Fidelity only — no assertion below depends on it.
     def __init__(self, provider):
+        self.engine_id = provider
         self.provider = provider
         self.calls = 0
 
@@ -213,7 +218,13 @@ def _pack(document_ids):
 
 
 def _core(*, retrieved=("EV-1",), submitted=None, bridge=None):
-    """A real Core over stand-ins: only the seams are fake, ask() is genuine."""
+    """A real Core over stand-ins: only the seams are fake, ask() is genuine.
+
+    The two engine stand-ins are registered in a real ModelGateway — the same
+    provider-neutral boundary production uses — and returned alongside the Core
+    so that the call assertions below still observe the ENGINES themselves,
+    unchanged in meaning. Core holds no provider-named engine field to reach.
+    """
     submitted = retrieved if submitted is None else submitted
     pack = _pack(submitted)
     core = orch.Core.__new__(orch.Core)
@@ -229,12 +240,12 @@ def _core(*, retrieved=("EV-1",), submitted=None, bridge=None):
     core._retrieval = _Retrieval(retrieved)
     core._build = _Builder(pack)
     core._core_adapter = _adapter(_Bridge() if bridge is None else bridge)
-    core._gemini = _Engine("gemini")
-    core._openai = _Engine("openai")
+    engines = {"gemini": _Engine("gemini"), "openai": _Engine("openai")}
+    core._model_gateway = ModelGateway(engines)
     core._mive = _Mive()
     core._renderer = _Renderer()
     core._pricing = _Pricing()
-    return core, pack
+    return core, pack, engines
 
 
 def _patch_gate(monkeypatch, fn):
@@ -288,7 +299,7 @@ def _no_engine(*args, **kwargs):
 # --------------------------------------------------------------------- #
 def test_task14_t01_order_is_governance_then_materialize_then_both_engines(monkeypatch):
     order = []
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
 
     def gate(**kwargs):
         order.append("governance")
@@ -317,7 +328,7 @@ def test_task14_t01_order_is_governance_then_materialize_then_both_engines(monke
 # T14-02  materialization failure stops the turn before any engine
 # --------------------------------------------------------------------- #
 def test_task14_t02_materialization_failure_prevents_every_engine_call(monkeypatch):
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
     _patch_gate(monkeypatch, _passing_gate_for(("EV-1",)))
 
     def refuse(source):
@@ -332,8 +343,8 @@ def test_task14_t02_materialization_failure_prevents_every_engine_call(monkeypat
         core.ask("Question", top_k=1)
 
     # fail-closed all the way down: no engine, no MIVE, no render, no AskResult
-    assert core._gemini.calls == 0
-    assert core._openai.calls == 0
+    assert engines["gemini"].calls == 0
+    assert engines["openai"].calls == 0
     assert core._mive.calls == 0
     assert core._renderer.calls == 0
 
@@ -343,7 +354,7 @@ def test_task14_t02_materialization_failure_prevents_every_engine_call(monkeypat
 #         legacy message contracts survive verbatim
 # --------------------------------------------------------------------- #
 def test_task14_t03_bridge_rejection_never_reaches_the_materializer(monkeypatch):
-    core, _ = _core(bridge=_Bridge(accepted=False, reasons=("R1", "R2")))
+    core, _, engines = _core(bridge=_Bridge(accepted=False, reasons=("R1", "R2")))
     _patch_gate(monkeypatch, _unreachable_gate)
     inputs, _ = _spy_materializer(monkeypatch)
     core._run_engine = _no_engine
@@ -353,11 +364,11 @@ def test_task14_t03_bridge_rejection_never_reaches_the_materializer(monkeypatch)
 
     assert str(excinfo.value) == "Runtime evidence bridge rejected: R1|R2"
     assert inputs == []
-    assert core._gemini.calls == core._openai.calls == 0
+    assert engines["gemini"].calls == engines["openai"].calls == 0
 
 
 def test_task14_t03b_gate_rejection_never_reaches_the_materializer(monkeypatch):
-    core, _ = _core()
+    core, _, engines = _core()
 
     def rejecting_gate(**kwargs):
         raise ValueError("blocked")
@@ -371,7 +382,7 @@ def test_task14_t03b_gate_rejection_never_reaches_the_materializer(monkeypatch):
 
     assert str(excinfo.value) == "Runtime admission gate rejected: blocked"
     assert inputs == []
-    assert core._gemini.calls == core._openai.calls == 0
+    assert engines["gemini"].calls == engines["openai"].calls == 0
 
 
 # --------------------------------------------------------------------- #
@@ -380,7 +391,7 @@ def test_task14_t03b_gate_rejection_never_reaches_the_materializer(monkeypatch):
 # --------------------------------------------------------------------- #
 def test_task14_t04_operational_failure_never_reaches_the_materializer(monkeypatch):
     boom = RuntimeError("qdrant unreachable")
-    core, _ = _core(bridge=_Bridge(resolve_error=boom))
+    core, _, engines = _core(bridge=_Bridge(resolve_error=boom))
     _patch_gate(monkeypatch, _unreachable_gate)
     inputs, _ = _spy_materializer(monkeypatch)
     core._run_engine = _no_engine
@@ -390,7 +401,7 @@ def test_task14_t04_operational_failure_never_reaches_the_materializer(monkeypat
 
     assert excinfo.value is boom  # identity, not merely the same type
     assert inputs == []
-    assert core._gemini.calls == core._openai.calls == 0
+    assert engines["gemini"].calls == engines["openai"].calls == 0
 
 
 # --------------------------------------------------------------------- #
@@ -400,7 +411,7 @@ def test_task14_t04_operational_failure_never_reaches_the_materializer(monkeypat
 def test_task14_t05_materialization_input_identity_mapping_is_exact(monkeypatch):
     retrieved = ("EV-1", "EV-2", "EV-3")
     submitted = ("EV-1", "EV-2")  # a truncated Context Pack: a strict subset
-    core, pack = _core(retrieved=retrieved, submitted=submitted)
+    core, pack, engines = _core(retrieved=retrieved, submitted=submitted)
     _patch_gate(monkeypatch, _passing_gate_for(submitted))
     inputs, outputs = _spy_materializer(monkeypatch)
 
@@ -429,7 +440,7 @@ def test_task14_t05_materialization_input_identity_mapping_is_exact(monkeypatch)
 def test_task14_t05b_truncated_pack_accounts_not_submitted_without_a_verdict(monkeypatch):
     retrieved = ("EV-1", "EV-2", "EV-3")
     submitted = ("EV-1", "EV-2")
-    core, pack = _core(retrieved=retrieved, submitted=submitted)
+    core, pack, engines = _core(retrieved=retrieved, submitted=submitted)
     _patch_gate(monkeypatch, _passing_gate_for(submitted))
     _, outputs = _spy_materializer(monkeypatch)
 
@@ -460,7 +471,7 @@ def test_task14_t05b_truncated_pack_accounts_not_submitted_without_a_verdict(mon
 # T14-06  the success path is otherwise untouched
 # --------------------------------------------------------------------- #
 def test_task14_t06_success_path_returns_the_unchanged_ask_result_shape(monkeypatch):
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
     _patch_gate(monkeypatch, _passing_gate_for(("EV-1",)))
     _spy_materializer(monkeypatch)
 
@@ -479,8 +490,8 @@ def test_task14_t06_success_path_returns_the_unchanged_ask_result_shape(monkeypa
         "message",
     }
     assert result.status == "success"
-    assert core._gemini.calls == 1
-    assert core._openai.calls == 1
+    assert engines["gemini"].calls == 1
+    assert engines["openai"].calls == 1
 
     # materialized, then deliberately dropped: no governed evidence is carried
     # into the result, in any field, at v0.1
@@ -494,7 +505,7 @@ def test_task14_t06_success_path_returns_the_unchanged_ask_result_shape(monkeypa
 # T14-07  the authorized compatibility mapping, and its narrowness
 # --------------------------------------------------------------------- #
 def test_task14_t07_materialization_failure_maps_to_the_authorized_error(monkeypatch):
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
     _patch_gate(monkeypatch, _passing_gate_for(("EV-1",)))
     cause = GovernedEvidenceMaterializationError(
         "governed_count 1 does not match 0 returned native records"
@@ -519,7 +530,7 @@ def test_task14_t07_materialization_failure_maps_to_the_authorized_error(monkeyp
 
 def test_task14_t07b_only_materialization_errors_are_caught(monkeypatch):
     """No broad `Exception` handler: an operational fault still propagates."""
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
     _patch_gate(monkeypatch, _passing_gate_for(("EV-1",)))
     boom = RuntimeError("materializer host fault")
 
@@ -533,14 +544,14 @@ def test_task14_t07b_only_materialization_errors_are_caught(monkeypatch):
         core.ask("Question", top_k=1)
 
     assert excinfo.value is boom
-    assert core._gemini.calls == core._openai.calls == 0
+    assert engines["gemini"].calls == engines["openai"].calls == 0
 
 
 # --------------------------------------------------------------------- #
 # T14-08  the DEBUG-gated progress contract is unchanged
 # --------------------------------------------------------------------- #
 def test_task14_t08_no_new_progress_event_is_emitted(monkeypatch):
-    core, _ = _core(retrieved=("EV-1",))
+    core, _, engines = _core(retrieved=("EV-1",))
     _patch_gate(monkeypatch, _passing_gate_for(("EV-1",)))
     _spy_materializer(monkeypatch)
 

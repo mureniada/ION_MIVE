@@ -44,6 +44,7 @@ from app.modules import ive_common
 from app.modules.context_pack import ContextPackBuilder
 from app.modules.gemini_ive import GeminiIVE
 from app.modules.mive import MIVEComparator
+from app.modules.model_gateway import ModelGateway
 from app.modules.openai_ive import OpenAIIVE
 from app.modules.renderer import DeterministicRenderer
 from app.modules.retrieval.embeddings import HashingEmbedder
@@ -180,19 +181,27 @@ def run_demonstration(store: Path, *, manifest_path: Path | None = None,
     retrieval.index(DOCS)
     builder = ContextPackBuilder(char_budget=settings.context_char_budget)
 
-    # The wrapper goes around the IVEPort, injected through the public keyword-only
-    # constructor. Dispatch order is gemini then openai, as the orchestrator calls them.
+    # The wrapper goes around the IVEPort. The wrapped engines are registered in
+    # the Model Gateway under the identity each one delegates from its inner
+    # adapter, and the Gateway is injected through the public keyword-only
+    # constructor. Dispatch order is gemini then openai, as the orchestrator
+    # calls them.
+    observed_gemini = ObservingIVE(
+        GeminiIVE(gemini_backend, model=GEMINI_MODEL), observer=observer,
+        sequence=1, provider="gemini", requested_model=GEMINI_MODEL,
+        clock=clock, latency_source=RECORDED_SOURCE)
+    observed_openai = ObservingIVE(
+        OpenAIIVE(openai_backend, model=OPENAI_MODEL), observer=observer,
+        sequence=2, provider="openai", requested_model=OPENAI_MODEL,
+        clock=clock, latency_source=RECORDED_SOURCE)
+
     core = Core(
         retrieval=retrieval,
         context_pack_builder=builder,
-        gemini_ive=ObservingIVE(
-            GeminiIVE(gemini_backend, model=GEMINI_MODEL), observer=observer,
-            sequence=1, provider="gemini", requested_model=GEMINI_MODEL,
-            clock=clock, latency_source=RECORDED_SOURCE),
-        openai_ive=ObservingIVE(
-            OpenAIIVE(openai_backend, model=OPENAI_MODEL), observer=observer,
-            sequence=2, provider="openai", requested_model=OPENAI_MODEL,
-            clock=clock, latency_source=RECORDED_SOURCE),
+        model_gateway=ModelGateway({
+            observed_gemini.engine_id: observed_gemini,
+            observed_openai.engine_id: observed_openai,
+        }),
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=pricing_module.PricingTable(),

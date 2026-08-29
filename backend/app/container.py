@@ -14,6 +14,7 @@ from .core.ports import EmbeddingPort
 from .modules.context_pack import ContextPackBuilder
 from .modules.gemini_ive import GeminiIVE
 from .modules.mive import MIVEComparator
+from .modules.model_gateway import ModelGateway
 from .modules.openai_ive import OpenAIIVE
 from .modules.renderer import DeterministicRenderer
 from .modules.retrieval.embeddings import HashingEmbedder, LocalEmbedder, OpenAIEmbedder
@@ -52,11 +53,18 @@ def build_core(settings: Settings) -> Core:
     gemini = GeminiIVE(GeminiBackend(settings.gemini_model), model=settings.gemini_model)
     openai = OpenAIIVE(OpenAIBackend(settings.openai_model), model=settings.openai_model)
 
+    # This is the ONLY place that knows which concrete engines exist. Each is
+    # registered under the identity it states about itself, so the key and the
+    # engine can never disagree, and the Core receives one neutral boundary
+    # instead of provider-named collaborators.
+    model_gateway = ModelGateway(
+        {gemini.engine_id: gemini, openai.engine_id: openai}
+    )
+
     return Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(char_budget=settings.context_char_budget),
-        gemini_ive=gemini,
-        openai_ive=openai,
+        model_gateway=model_gateway,
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=PricingTable(),

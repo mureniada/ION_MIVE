@@ -32,11 +32,19 @@ from app.modules.governed_evidence import (
     GovernedEvidenceMaterializationError,
     GovernedEvidenceSet,
 )
+from app.modules.model_gateway import ModelGateway
 from app.modules.turn_record import TurnClosureState, TurnRecord
 
 VERIFIED = "VERIFIED"
 PENDING = "PENDING"
 PASS = "PASS"
+
+# The models the two engine stand-ins are CONFIGURED with. Named once so the
+# construction below and the requested-model assertion read the same fact from
+# the same place; Core holds no provider-named engine field to read it back
+# from now that execution goes through the Model Gateway.
+GEMINI_MODEL = "gemini-3.1-flash-lite"
+OPENAI_MODEL = "gpt-5.4-mini"
 
 
 # --------------------------------------------------------------------- #
@@ -273,8 +281,15 @@ def _core(
     core._retrieval = _Retrieval(retrieved, error=retrieval_error)
     core._build = _Builder(pack, error=builder_error)
     core._core_adapter = _adapter(_Bridge() if bridge is None else bridge)
-    core._gemini = _Engine("gemini", "gemini", "gemini-3.1-flash-lite", error=gemini_error)
-    core._openai = _Engine("openai", "openai", "gpt-5.4-mini", error=openai_error)
+    # The stand-ins are registered in a real ModelGateway — the same
+    # provider-neutral boundary production uses — under the identity each one
+    # states about itself. Only the seam changes; ask() is still genuine.
+    core._model_gateway = ModelGateway(
+        {
+            "gemini": _Engine("gemini", "gemini", GEMINI_MODEL, error=gemini_error),
+            "openai": _Engine("openai", "openai", OPENAI_MODEL, error=openai_error),
+        }
+    )
     core._mive = _Mive(order=order, error=mive_error)
     core._renderer = renderer
     core._pricing = _Pricing(error=pricing_error)
@@ -485,8 +500,8 @@ def test_t18_r07_r08_both_model_executions_are_recorded_truthfully(monkeypatch):
     assert [e.provider for e in executions] == ["gemini", "openai"]
     # the models the adapters were actually configured with, in order
     assert [e.requested_model for e in executions] == [
-        core._gemini.model,
-        core._openai.model,
+        GEMINI_MODEL,
+        OPENAI_MODEL,
     ]
     assert [e.requested_model for e in executions] == [
         "gemini-3.1-flash-lite",

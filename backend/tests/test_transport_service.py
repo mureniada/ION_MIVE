@@ -12,6 +12,7 @@ from app.core.orchestrator import Core
 from app.modules.context_pack import ContextPackBuilder
 from app.modules.gemini_ive import GeminiIVE
 from app.modules.mive import MIVEComparator
+from app.modules.model_gateway import ModelGateway
 from app.modules.openai_ive import OpenAIIVE
 from app.modules.renderer import DeterministicRenderer
 from app.modules.retrieval.embeddings import HashingEmbedder
@@ -36,11 +37,14 @@ def _core(gemini_backend=None, openai_backend=None):
     retrieval.index(_DOCS)
     settings = Settings.load({"OPENAI_MODEL": "gpt-5.4-mini",
                               "GEMINI_MODEL": "gemini-3.1-flash-lite"})
+    gemini = GeminiIVE(gemini_backend or FakeBackend(_IVE_JSON), model="gemini-3.1-flash-lite")
+    openai = OpenAIIVE(openai_backend or FakeBackend(_IVE_JSON), model="gpt-5.4-mini")
     return Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(),
-        gemini_ive=GeminiIVE(gemini_backend or FakeBackend(_IVE_JSON), model="gemini-3.1-flash-lite"),
-        openai_ive=OpenAIIVE(openai_backend or FakeBackend(_IVE_JSON), model="gpt-5.4-mini"),
+        model_gateway=ModelGateway(
+            {gemini.engine_id: gemini, openai.engine_id: openai}
+        ),
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=PricingTable(),

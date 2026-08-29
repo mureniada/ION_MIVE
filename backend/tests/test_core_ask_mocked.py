@@ -6,6 +6,7 @@ from app.core.orchestrator import Core
 from app.modules.context_pack import ContextPackBuilder
 from app.modules.gemini_ive import GeminiIVE
 from app.modules.mive import MIVEComparator
+from app.modules.model_gateway import ModelGateway
 from app.modules.openai_ive import OpenAIIVE
 from app.modules.renderer import DeterministicRenderer
 from app.modules.retrieval.embeddings import HashingEmbedder
@@ -39,11 +40,14 @@ def _build_core(gemini_backend, openai_backend, top_k=3):
         {"OPENAI_MODEL": "gpt-5.4-mini", "GEMINI_MODEL": "gemini-3.1-flash-lite",
          "DEFAULT_TOP_K": str(top_k)}
     )
+    gemini = GeminiIVE(gemini_backend, model="gemini-3.1-flash-lite")
+    openai = OpenAIIVE(openai_backend, model="gpt-5.4-mini")
     return Core(
         retrieval=retrieval,
         context_pack_builder=ContextPackBuilder(char_budget=settings.context_char_budget),
-        gemini_ive=GeminiIVE(gemini_backend, model="gemini-3.1-flash-lite"),
-        openai_ive=OpenAIIVE(openai_backend, model="gpt-5.4-mini"),
+        model_gateway=ModelGateway(
+            {gemini.engine_id: gemini, openai.engine_id: openai}
+        ),
         mive=MIVEComparator(),
         renderer=DeterministicRenderer(),
         pricing=PricingTable(),
