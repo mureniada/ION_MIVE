@@ -1,0 +1,130 @@
+{
+  "receipt_schema_id": "ION_TASK22_CLOSURE_RECEIPT_V0_1",
+  "receipt_version": "0.1",
+
+  "task": {
+    "task_id": "TASK_22",
+    "name": "SESSION_TURN_CONTROLLER",
+    "scope_version": "v0.1",
+    "status": "CLOSED",
+    "verdict": "PASS"
+  },
+
+  "repository": {
+    "branch": "task22-session-turn-controller-20260830",
+    "closure_parent_head": "8cf09d4fb920ba88ccf78af143ea164158f07a3d"
+  },
+
+  "contract": {
+    "path": "docs/ION_SESSION_TURN_CONTROLLER_CONTRACT_v1.md",
+    "commit": "a3f2c525d2675d1b2701d7994d1b342153eb255a"
+  },
+
+  "implementation_anchors": {
+    "turn_record_capture_seam": "13994065b22ef4786dbe71d02ee97ad1a7f202a0",
+    "session_models": "4fb861866e36ae4c3f79a08286a18c9c46c99dde",
+    "session_controller": "0858170ef09bdefce19f612b080884f9f6fce690",
+    "two_turn_harness": "707cb100b01efadff5edae2533a30536d6b142ee",
+    "durable_run_002_receipt_commit": "f1ecb36e03853599a1b8c448c7c4ab2de02cf26a",
+    "cross_session_isolation": "8cf09d4fb920ba88ccf78af143ea164158f07a3d"
+  },
+
+  "governed_two_turn_proof": {
+    "run_id": "TASK22_4_TWO_TURN_CONTROLLED_002",
+    "receipt_path": "runs/task22/TASK22_4_TWO_TURN_CONTROLLED_002/receipt.json",
+    "receipt_sha256": "6aadc5e4fa0e01dc1b20d2db56b22301040f6e93491588f2f5bdb0c24361f019",
+    "execution_anchor": "707cb100b01efadff5edae2533a30536d6b142ee",
+    "harness_blob": "b69a1d3957df68b28e496412db06d8e831684073",
+    "source_path": "corpus/README.md",
+    "source_sha256": "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e8609cc03fa1ee",
+    "session_turns": 2,
+    "history_ordinals": [1, 2],
+    "both_turn_records_completed": true,
+    "fresh_governed_pipeline_per_turn": true,
+    "no_cross_turn_authority_carry_forward": true,
+    "close_not_counted_as_third_turn": true
+  },
+
+  "isolation_proof": {
+    "commit": "8cf09d4fb920ba88ccf78af143ea164158f07a3d",
+    "close_a_does_not_mutate_b": true,
+    "failure_a_does_not_mutate_b": true,
+    "session_histories_mutation_isolated": true
+  },
+
+  "independent_task_verification": {
+    "classification": "TASK22_6_INDEPENDENT_TASK_VERIFICATION_PASS",
+    "regression_tests": {
+      "passed": 161,
+      "failed": 0,
+      "skipped": 0
+    },
+    "implementation_defects": 0,
+    "contract_defects": 0,
+    "open_test_or_proof_gaps": 0,
+    "open_durability_or_provenance_gaps": 0
+  },
+
+  "acceptance_matrix": {
+    "T22-01": "PASS",
+    "T22-02": "PASS",
+    "T22-03": "PASS",
+    "T22-04": "PASS",
+    "T22-05": "PASS",
+    "T22-06": "PASS",
+    "T22-07": "PASS",
+    "T22-08": "PASS",
+    "T22-09": "PASS",
+    "T22-10": "PASS",
+    "T22-11": "PASS",
+    "T22-12": "PASS",
+    "T22-13": "PASS",
+    "T22-14": "PASS",
+    "T22-15": "PASS",
+    "T22-16": "PASS",
+    "T22-17": "PASS",
+    "T22-18": "PASS",
+    "T22-19": "PASS",
+    "T22-20": "PASS",
+    "T22-21": "PASS",
+    "T22-22": "PASS"
+  },
+
+  "historical_run_001": {
+    "run_id": "TASK22_4_TWO_TURN_CONTROLLED_001",
+    "execution_status": "REPORTED_PASS",
+    "evidence_status": "LOST_BEFORE_DURABLE_PRESERVATION",
+    "verification_status": "NOT_VERIFIABLE",
+    "closure_evidence": false,
+    "superseded_for_evidentiary_purpose_by": "TASK22_4_TWO_TURN_CONTROLLED_002"
+  },
+
+  "intentional_v0_1_boundaries": {
+    "rest_session_surface": "DEFERRED",
+    "durable_session_persistence": "DEFERRED",
+    "adaptive_dialogue_integration": "DEFERRED",
+    "conversation_memory_carry_forward": "NOT_IMPLEMENTED",
+    "cross_turn_evidence_reuse": "NOT_IMPLEMENTED"
+  },
+
+  "epistemic_limitations": [
+    "Run 002 provider counts are structural/application-level evidence, not independent external network telemetry.",
+    "The independent Task 22 verification inspected committed artifacts and re-ran the network-free regression set; it did not execute real external providers.",
+    "Task 22 closure applies only to the frozen v0.1 Session/Turn Controller scope."
+  ],
+
+  "closure_laws": {
+    "session_state_is_not_evidence": true,
+    "previous_turn_state_has_no_authority_input_into_next_turn": true,
+    "controller_sits_above_core": true,
+    "core_does_not_depend_on_session_layer": true,
+    "turn_record_remains_core_owned": true,
+    "one_active_turn_max_per_session": true,
+    "different_sessions_not_globally_serialized": true,
+    "session_histories_mutation_isolated": true,
+    "close_does_not_create_third_turn": true,
+    "session_state_in_memory_only": true,
+    "no_rest_session_surface_yet": true,
+    "no_adaptive_dialogue_or_conversation_memory_wired": true
+  }
+}
