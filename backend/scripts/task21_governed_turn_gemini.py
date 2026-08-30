@@ -102,6 +102,14 @@ from app.modules.retrieval.memory_index import InMemoryRetrieval
 from app.modules.telemetry import PricingTable
 
 RECEIPT_SCHEMA_ID = "ION_TASK21_REAL_GEMINI_RECEIPT_V0_1"
+
+# The operator-approved source identity for this mission (TASK 21.2B-H1-R1).
+# Pinned as a hash only -- never the README's content, which must still be
+# read from the real repository file at every run. A future run whose real
+# corpus/README.md bytes do not hash to this value must stop before any
+# provider-capable execution; see `verify_approved_source_identity()` below.
+APPROVED_SOURCE_SHA256 = "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e8609cc03fa1ee"
+
 PROVIDER_REPORTED_MODEL_NOT_CAPTURED = "NOT_CAPTURED"
 EXTERNAL_HTTP_REQUEST_COUNT_UNVERIFIED = "UNVERIFIED"
 SDK_INTERNAL_RETRY_STATUS_UNKNOWN = "UNKNOWN_OR_SDK_CONTROLLED"
@@ -115,6 +123,56 @@ _FORBIDDEN_COMPONENT_NAMES = (
     "OpenAIBackend",
     "QdrantRetrieval",
 )
+
+
+# =========================================================================
+# Source identity gate — checked FIRST, before SDK/config preflight, before
+# governance staging, before Core construction, before any provider-capable
+# object exists (TASK 21.2B-H1-R1).
+# =========================================================================
+class SourceIdentityError(RuntimeError):
+    """Raised when the real `corpus/README.md` bytes do not hash to
+    `APPROVED_SOURCE_SHA256` (or the file is missing).
+
+    Raised BEFORE `run_preflight()`, BEFORE `stage_and_materialize_records`,
+    BEFORE `Core` is constructed, and BEFORE any `GeminiIVE`/`GeminiBackend`
+    object exists — a changed source must never be silently carried forward
+    into a real provider request, merely with a different hash recorded.
+    """
+
+    def __init__(self, message: str, *, measured_source_sha256: str | None) -> None:
+        super().__init__(message)
+        self.measured_source_sha256 = measured_source_sha256
+
+
+def verify_approved_source_identity(repo_root: Path) -> str:
+    """Read the REAL `corpus/README.md`, compute its SHA256 from its actual
+    bytes, and compare it against `APPROVED_SOURCE_SHA256` by exact,
+    normalized (stripped, lowercased) hexadecimal identity.
+
+    Never reads a cached/prior value and never hardcodes README content:
+    the bytes are read fresh from the repository file on every call.
+    Returns the measured SHA256 on a match. Raises `SourceIdentityError`
+    (carrying the measured hash, or `None` if the file is missing) on any
+    mismatch — the caller must not continue toward governance or a
+    provider call on this exception.
+    """
+    real_readme = repo_root / CONTROLLED_SOURCE_RELATIVE_PATH
+    if not real_readme.is_file():
+        raise SourceIdentityError(
+            f"approved source not found at expected repository path: {real_readme}",
+            measured_source_sha256=None,
+        )
+    measured = _sha256_bytes(real_readme.read_bytes()).strip().lower()
+    approved = APPROVED_SOURCE_SHA256.strip().lower()
+    if measured != approved:
+        raise SourceIdentityError(
+            "source identity mismatch: corpus/README.md does not match the "
+            "operator-approved SHA256 for this mission; refusing to proceed "
+            "toward governance or a real provider call",
+            measured_source_sha256=measured,
+        )
+    return measured
 
 
 # =========================================================================
@@ -411,13 +469,19 @@ def run_real_gemini_turn(
     NOT invoked anywhere in this file except from `main()`, which is
     itself never invoked by TASK 21.2B-H1 (build-only phase).
     """
+    script_dir = Path(__file__).resolve().parent
+    repo_root = discover_repo_root(script_dir)
+
+    # Source identity gate FIRST: a changed corpus/README.md must stop this
+    # mission before SDK/config readiness, before governance staging, and
+    # before any provider-capable object exists (TASK 21.2B-H1-R1).
+    verify_approved_source_identity(repo_root)
+
     preflight = run_preflight()
     if not preflight.ok:
         raise PreflightError("; ".join(preflight.problems))
     requested_model = read_requested_model()
 
-    script_dir = Path(__file__).resolve().parent
-    repo_root = discover_repo_root(script_dir)
     repository_head = read_repository_head(repo_root)
 
     with tempfile.TemporaryDirectory(prefix="ion_task21_real_gemini_") as tmp:
@@ -641,6 +705,46 @@ def build_failure_receipt(
     }
 
 
+def build_source_mismatch_receipt(
+    error: SourceIdentityError,
+    *,
+    run_id: str,
+    repository_head: str,
+    question: str,
+    requested_model: str | None,
+) -> dict[str, Any]:
+    """Facts-only failure receipt for a source-identity gate refusal.
+
+    No governance or provider activity has occurred at all when this
+    receipt is built (the gate runs before both), so every execution-count
+    field is truthfully 0/empty rather than omitted or defaulted from a
+    stage that never ran.
+    """
+    return {
+        "receipt_schema_id": RECEIPT_SCHEMA_ID,
+        "run_id": run_id,
+        "executed_at_utc": _rfc3339_now_utc(),
+        "repository_head": repository_head,
+        "run_mode": "REAL_GEMINI",
+        "provider_execution": "REAL_GEMINI",
+        "provider_attempted": False,
+        "provider_succeeded": False,
+        "real_gemini_executed": False,
+        "source_path": CONTROLLED_SOURCE_RELATIVE_PATH,
+        "approved_source_sha256": APPROVED_SOURCE_SHA256,
+        "measured_source_sha256": error.measured_source_sha256,
+        "question": question,
+        "requested_model": requested_model,
+        "core_engine_execution_count": 0,
+        "gemini_backend_generate_count": 0,
+        "external_http_request_count": 0,
+        "sdk_internal_retry_status": SDK_INTERNAL_RETRY_STATUS_UNKNOWN,
+        "ask_result_status": "failure",
+        "error_type": type(error).__name__,
+        "error_stage": "SOURCE_IDENTITY",
+    }
+
+
 # =========================================================================
 # CLI — no --gemini/--real/--network switch: this file's entire purpose is
 # the real-provider path, so no flag "enables" it; operator authorization
@@ -669,6 +773,19 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         observation = run_real_gemini_turn(question=args.question, top_k=args.top_k)
+    except SourceIdentityError as exc:
+        receipt = build_source_mismatch_receipt(
+            exc,
+            run_id=run_id,
+            repository_head=_best_effort_repository_head(),
+            question=args.question,
+            requested_model=_best_effort_requested_model(),
+        )
+        print(json.dumps(receipt, indent=2, sort_keys=True), file=sys.stderr)
+        if args.receipt is not None:
+            write_receipt(receipt, args.receipt)
+            print(f"source-mismatch failure receipt written to {args.receipt}", file=sys.stderr)
+        return 3
     except RealGeminiTurnFailed as failure:
         receipt = build_failure_receipt(
             failure,
