@@ -1,0 +1,240 @@
+{
+  "aggregate_counts": {
+    "controlled_engine_execution_count": 2,
+    "core_ask_count": 2,
+    "governed_evidence_materialization_count": 2,
+    "model_context_build_count": 2,
+    "retrieval_count": 2,
+    "session_controller_run_turn_count": 2,
+    "turn_record_capture_count": 2
+  },
+  "cross_turn_authority_checks": {
+    "turn1_model_output_not_evidence_for_turn2": true,
+    "turn1_rendered_response_not_governance_input_to_turn2": true,
+    "turn1_rendered_response_not_retrieval_input_to_turn2": true,
+    "turn1_session_entry_not_input_to_turn2": true,
+    "turn1_turn_record_not_input_to_turn2": true,
+    "turn2_fresh_pipeline_executed": true
+  },
+  "executed_at_utc": "2026-08-30T12:27:41Z",
+  "execution_profile": {
+    "mode": "SINGLE",
+    "profile_id": "STANDARD_GEMINI",
+    "profile_version": "0.1"
+  },
+  "final_close_checks": {
+    "active_turn_none": true,
+    "close_not_counted_as_third_turn": true,
+    "counts_unchanged_by_close": true,
+    "entries_unchanged": true,
+    "next_turn_ordinal_unchanged": true,
+    "ordered_ordinals_unchanged": true,
+    "status_closed": true
+  },
+  "initial_session": {
+    "active_turn": null,
+    "next_turn_ordinal": 1,
+    "ordered_ordinals": [],
+    "status": "ACTIVE",
+    "turn_ids": []
+  },
+  "post_close_session": {
+    "active_turn": null,
+    "next_turn_ordinal": 3,
+    "ordered_ordinals": [
+      1,
+      2
+    ],
+    "status": "CLOSED",
+    "turn_ids": [
+      "d60c23449e2e4db3b70260a68bf6e6fd",
+      "876d3d35f5624a108e1f8db3b76eea02"
+    ]
+  },
+  "pre_close_session": {
+    "active_turn": null,
+    "next_turn_ordinal": 3,
+    "ordered_ordinals": [
+      1,
+      2
+    ],
+    "status": "ACTIVE",
+    "turn_ids": [
+      "d60c23449e2e4db3b70260a68bf6e6fd",
+      "876d3d35f5624a108e1f8db3b76eea02"
+    ]
+  },
+  "provider_counts": {
+    "mive": 0,
+    "openai": 0,
+    "qdrant": 0,
+    "real_gemini": 0
+  },
+  "receipt_schema_id": "ION_TASK22_TWO_TURN_CONTROLLED_RECEIPT_V0_1",
+  "receipt_version": "0.1",
+  "repository_head": "707cb100b01efadff5edae2533a30536d6b142ee",
+  "run_id": "TASK22_4_TWO_TURN_CONTROLLED_002",
+  "session_id": "86872a470d9c489ba1321cce3dec3861",
+  "source_path": "corpus/README.md",
+  "source_sha256": "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e8609cc03fa1ee",
+  "turns": [
+    {
+      "admitted_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "closure_state": "COMPLETED",
+      "context_pack_id": "cp_4af53737ddc93c70",
+      "controlled_engine_execution_count": 1,
+      "model_context_evidence_ids": [
+        "readme::pall::c0"
+      ],
+      "ordinal": 1,
+      "question": "Where should operator-approved source documents be placed?",
+      "question_id": "d60c23449e2e4db3b70260a68bf6e6fd",
+      "rendered_evidence_ids": [
+        "readme::pall::c0"
+      ],
+      "rendered_response": {
+        "disclaimer": "This response was produced by a single configured model execution (gemini). No second, independent model interpretation was run for this turn, so no cross-model agreement, disagreement, or consensus claim applies.",
+        "evidence": [
+          {
+            "chunk_id": "readme::pall::c0",
+            "claim_linkage": "Operator-approved source documents should be placed under corpus/source/, per the admitted controlled evidence.",
+            "document_id": "readme::pall::c0",
+            "excerpt": "# Corpus Placement Place the operator-approved source documents under: `corpus/source/` Do not include application code here. Recommended ingestion metadata: - source ID; - title; - author; - edition/date; - file name; - page or location; -",
+            "page": null,
+            "source": "readme",
+            "title": "README"
+          }
+        ],
+        "mive_assessment": null,
+        "operational_metrics": {
+          "comparison_latency_ms": null,
+          "context_characters": 427,
+          "context_documents": 1,
+          "error_stage": null,
+          "providers": [
+            {
+              "estimated_cost": null,
+              "input_tokens": null,
+              "latency_ms": 0.005,
+              "model": "task22-controlled-two-turn-engine-v0-1",
+              "output_tokens": null,
+              "provider": "CONTROLLED_FAKE",
+              "usage_is_estimated": true
+            }
+          ],
+          "question": "Where should operator-approved source documents be placed?",
+          "request_id": "d60c23449e2e4db3b70260a68bf6e6fd",
+          "retrieval_latency_ms": 0.143,
+          "retrieved_chunks": 1,
+          "status": "success",
+          "timestamp": "2026-08-30T12:27:41.681128+00:00",
+          "total_estimated_cost": null,
+          "total_latency_ms": 5.712
+        },
+        "primary_answer": "Operator-approved source documents should be placed under corpus/source/, per the admitted controlled evidence.",
+        "question": "Where should operator-approved source documents be placed?",
+        "uncertainty": {
+          "reported": [
+            "This report was produced by a controlled, non-Gemini deterministic engine for TASK 22.4 only."
+          ]
+        }
+      },
+      "rendered_response_sha256": "2cc254958550963a69cc5167759a3330235ccd9d263e3b406e4d0b2bc6674405",
+      "request_id": "d60c23449e2e4db3b70260a68bf6e6fd",
+      "retrieved_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "submitted_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "subset_checks": {
+        "admitted_subset_of_submitted": true,
+        "model_context_subset_of_admitted": true,
+        "rendered_subset_of_model_context": true,
+        "submitted_subset_of_retrieved": true
+      },
+      "turn_id": "d60c23449e2e4db3b70260a68bf6e6fd"
+    },
+    {
+      "admitted_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "closure_state": "COMPLETED",
+      "context_pack_id": "cp_98d4e06495570cad",
+      "controlled_engine_execution_count": 1,
+      "model_context_evidence_ids": [
+        "readme::pall::c0"
+      ],
+      "ordinal": 2,
+      "question": "What must not be included in the corpus source document location?",
+      "question_id": "876d3d35f5624a108e1f8db3b76eea02",
+      "rendered_evidence_ids": [
+        "readme::pall::c0"
+      ],
+      "rendered_response": {
+        "disclaimer": "This response was produced by a single configured model execution (gemini). No second, independent model interpretation was run for this turn, so no cross-model agreement, disagreement, or consensus claim applies.",
+        "evidence": [
+          {
+            "chunk_id": "readme::pall::c0",
+            "claim_linkage": "Application code must not be included in the corpus source document location, per the admitted controlled evidence.",
+            "document_id": "readme::pall::c0",
+            "excerpt": "# Corpus Placement Place the operator-approved source documents under: `corpus/source/` Do not include application code here. Recommended ingestion metadata: - source ID; - title; - author; - edition/date; - file name; - page or location; -",
+            "page": null,
+            "source": "readme",
+            "title": "README"
+          }
+        ],
+        "mive_assessment": null,
+        "operational_metrics": {
+          "comparison_latency_ms": null,
+          "context_characters": 427,
+          "context_documents": 1,
+          "error_stage": null,
+          "providers": [
+            {
+              "estimated_cost": null,
+              "input_tokens": null,
+              "latency_ms": 0.004,
+              "model": "task22-controlled-two-turn-engine-v0-1",
+              "output_tokens": null,
+              "provider": "CONTROLLED_FAKE",
+              "usage_is_estimated": true
+            }
+          ],
+          "question": "What must not be included in the corpus source document location?",
+          "request_id": "876d3d35f5624a108e1f8db3b76eea02",
+          "retrieval_latency_ms": 0.118,
+          "retrieved_chunks": 1,
+          "status": "success",
+          "timestamp": "2026-08-30T12:27:41.685810+00:00",
+          "total_estimated_cost": null,
+          "total_latency_ms": 4.356
+        },
+        "primary_answer": "Application code must not be included in the corpus source document location, per the admitted controlled evidence.",
+        "question": "What must not be included in the corpus source document location?",
+        "uncertainty": {
+          "reported": [
+            "This report was produced by a controlled, non-Gemini deterministic engine for TASK 22.4 only."
+          ]
+        }
+      },
+      "rendered_response_sha256": "b6af3a2319dc71aead8a03ffd8e82377b1e41ec73be9ac27a7deb8d2fd644ea8",
+      "request_id": "876d3d35f5624a108e1f8db3b76eea02",
+      "retrieved_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "submitted_candidate_ids": [
+        "readme::pall::c0"
+      ],
+      "subset_checks": {
+        "admitted_subset_of_submitted": true,
+        "model_context_subset_of_admitted": true,
+        "rendered_subset_of_model_context": true,
+        "submitted_subset_of_retrieved": true
+      },
+      "turn_id": "876d3d35f5624a108e1f8db3b76eea02"
+    }
+  ]
+}
