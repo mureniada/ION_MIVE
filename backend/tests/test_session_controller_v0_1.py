@@ -897,3 +897,103 @@ def test_package_exports_full_public_surface():
         "TurnRecordCaptureError", "UnknownSessionError",
     }
     assert not any(name.startswith("_SessionState") for name in session_pkg.__all__)
+
+
+# --------------------------------------------------------------------- #
+# TASK 22.5B — cross-session mutation isolation
+#
+# L22.5-07/08/09: a Controller-owned session's lifecycle/history state must
+# be unaffected by an operation performed on a DIFFERENT session, whether
+# that operation is a close or a genuine Core failure. Both tests below use
+# the same real-SessionController/real-Core-over-stand-ins composition as
+# every other test in this file — no provider, no network, no Qdrant.
+# --------------------------------------------------------------------- #
+def test_31_closing_session_a_does_not_mutate_session_b(monkeypatch):
+    controller = SessionController(core=_core())
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+
+    session_a = controller.create_session()
+    session_b = controller.create_session()
+
+    controller.run_turn(session_b.session_id, "Question", top_k=3)
+    b_before = controller.get_session(session_b.session_id)
+
+    assert b_before.status is SessionStatus.ACTIVE
+    assert len(b_before.ordered_turns) == 1
+    assert [e.turn_ordinal for e in b_before.ordered_turns] == [1]
+    assert b_before.next_turn_ordinal == 2
+    assert b_before.active_turn is None
+
+    controller.close_session(session_a.session_id)
+
+    b_after = controller.get_session(session_b.session_id)
+
+    assert b_after == b_before
+    assert b_after.status == SessionStatus.ACTIVE
+    assert b_after.ordered_turns == b_before.ordered_turns
+    assert b_after.next_turn_ordinal == 2
+    assert b_after.active_turn is None
+
+    # closing A only ever affected A, never B
+    a_after = controller.get_session(session_a.session_id)
+    assert a_after.status is SessionStatus.CLOSED
+    assert a_after.session_id != b_after.session_id
+
+
+class _FailFromSecondCallBridge(_Bridge):
+    """The same `_Bridge` stand-in already used across this file, extended
+    only to succeed on its first `resolve()` call and fail from the second
+    call onward. One `Core` instance is shared by the Controller across all
+    sessions (matches production wiring), so a session-A failure that must
+    leave a session-B success in place needs a bridge whose failure is
+    ORDERED, not global — B's turn (called first) succeeds, A's turn
+    (called second) genuinely fails through the same governance seam every
+    other failure test in this file already uses.
+    """
+
+    def __init__(self, error):
+        super().__init__()
+        self._error = error
+        self._calls = 0
+
+    def resolve(self, evidence):
+        self._calls += 1
+        if self._calls >= 2:
+            raise self._error
+        return super().resolve(evidence)
+
+
+def test_32_failure_in_session_a_does_not_mutate_session_b_history(monkeypatch):
+    boom = RuntimeError("qdrant unreachable")
+    controller = SessionController(core=_core(bridge=_FailFromSecondCallBridge(boom)))
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+
+    session_a = controller.create_session()
+    session_b = controller.create_session()
+
+    controller.run_turn(session_b.session_id, "Question", top_k=3)
+    b_before = controller.get_session(session_b.session_id)
+
+    assert b_before.status is SessionStatus.ACTIVE
+    assert [e.turn_ordinal for e in b_before.ordered_turns] == [1]
+    assert b_before.next_turn_ordinal == 2
+    assert b_before.active_turn is None
+
+    with pytest.raises(RuntimeError) as excinfo:
+        controller.run_turn(session_a.session_id, "Question", top_k=3)
+    assert excinfo.value is boom  # the genuine Core failure path was exercised
+
+    b_after = controller.get_session(session_b.session_id)
+
+    assert b_after == b_before
+    assert b_after.status == SessionStatus.ACTIVE
+    assert b_after.ordered_turns == b_before.ordered_turns
+    assert b_after.next_turn_ordinal == 2
+    assert b_after.active_turn is None
+
+    # confirm A actually took the intended failure path: one captured
+    # FAILED TurnRecord, distinct from B's own (unrelated) history
+    a_after = controller.get_session(session_a.session_id)
+    assert len(a_after.ordered_turns) == 1
+    assert a_after.ordered_turns[0].turn_record.closure_state is TurnClosureState.FAILED
+    assert a_after.session_id != b_after.session_id
