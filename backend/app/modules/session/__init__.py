@@ -1,11 +1,20 @@
-"""Session model vocabulary (TASK 22 v0.1) — identity, status, turn history.
+"""Session / Turn Controller vocabulary (TASK 22 v0.1) — identity, status,
+turn history, and the in-memory Controller that runs turns over them.
 
-The export list is deliberately closed to the approved model surface only.
-No `SessionController` type is exported here: it does not exist yet, and
-this package must not be extended to imply otherwise before it is
-separately authorized and implemented.
+The export list is deliberately closed to the approved public surface only:
+the frozen model types (TASK 22.3B2) plus the Controller and its exception
+hierarchy (TASK 22.3B3). No private runtime-state type is exported — in
+particular `_SessionState` stays internal to `controller.py`.
 """
 
+from .controller import (
+    ConcurrentTurnError,
+    SessionClosedError,
+    SessionController,
+    SessionControllerError,
+    TurnRecordCaptureError,
+    UnknownSessionError,
+)
 from .models import (
     ActiveTurnReservation,
     Session,
@@ -16,8 +25,14 @@ from .models import (
 
 __all__ = [
     "ActiveTurnReservation",
+    "ConcurrentTurnError",
     "Session",
+    "SessionClosedError",
+    "SessionController",
+    "SessionControllerError",
     "SessionModelError",
     "SessionStatus",
     "SessionTurnEntry",
+    "TurnRecordCaptureError",
+    "UnknownSessionError",
 ]

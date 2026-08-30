@@ -391,16 +391,49 @@ def test_20_session_models_touches_no_provider():
 
 
 # --------------------------------------------------------------------- #
-# additional: package exports are closed to the approved model surface
+# additional: package exports are closed to the approved public surface
+#
+# TASK 22.3B3 authoritatively expanded this package's public surface from
+# the five frozen model symbols (TASK 22.3B2) to those PLUS the approved
+# Controller API and its exception hierarchy (OD22-16/OD22-17). The exact
+# approved set is stated below rather than weakened into a subset check:
+# an unreviewed addition must fail this test, in either direction.
 # --------------------------------------------------------------------- #
-def test_package_exports_only_the_approved_model_surface():
+FROZEN_MODEL_EXPORTS = frozenset({
+    "ActiveTurnReservation", "Session", "SessionModelError",
+    "SessionStatus", "SessionTurnEntry",
+})
+
+APPROVED_CONTROLLER_EXPORTS = frozenset({
+    "SessionController", "SessionControllerError", "UnknownSessionError",
+    "SessionClosedError", "ConcurrentTurnError", "TurnRecordCaptureError",
+})
+
+
+def test_package_exports_only_the_approved_public_surface():
     import app.modules.session as session_pkg
 
-    assert set(session_pkg.__all__) == {
-        "ActiveTurnReservation", "Session", "SessionModelError",
-        "SessionStatus", "SessionTurnEntry",
-    }
-    assert not any("controller" in name.lower() for name in session_pkg.__all__)
+    exported = set(session_pkg.__all__)
+
+    # exact approved surface — no unrelated export is admitted, and none of
+    # the approved ones may quietly disappear
+    assert exported == set(FROZEN_MODEL_EXPORTS | APPROVED_CONTROLLER_EXPORTS)
+
+    # every frozen TASK 22.3B2 model export survives the B3 expansion
+    assert FROZEN_MODEL_EXPORTS <= exported
+
+    # the approved Controller public API is present
+    assert APPROVED_CONTROLLER_EXPORTS <= exported
+
+    # every exported name actually resolves on the package
+    for name in exported:
+        assert hasattr(session_pkg, name), f"{name} is exported but not present"
+
+    # no private runtime-state type is exported: _SessionState is internal
+    # to controller.py and must never reach the package surface
+    assert not any(name.startswith("_") for name in exported)
+    assert "_SessionState" not in exported
+    assert not hasattr(session_pkg, "_SessionState")
 
 
 def test_session_model_error_is_a_value_error():
