@@ -1,0 +1,105 @@
+{
+  "admitted_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "ask_result_status": "success",
+  "core_engine_execution_count": 1,
+  "engine_ids": [
+    "gemini"
+  ],
+  "executed_at_utc": "2026-08-30T07:36:07Z",
+  "execution_mode": "SINGLE",
+  "execution_profile_id": "STANDARD_GEMINI",
+  "execution_profile_version": "0.1",
+  "external_http_request_count": "UNVERIFIED",
+  "gemini_backend_generate_count": 1,
+  "mive_execution_count": 0,
+  "model_context_evidence_ids": [
+    "readme::pall::c0"
+  ],
+  "openai_execution_count": 0,
+  "provider_attempted": true,
+  "provider_execution": "REAL_GEMINI",
+  "provider_reported_model": "NOT_CAPTURED",
+  "provider_succeeded": true,
+  "question": "Where should operator-approved source documents be placed?",
+  "real_gemini_executed": true,
+  "receipt_schema_id": "ION_TASK21_REAL_GEMINI_RECEIPT_V0_1",
+  "rendered_evidence_ids": [
+    "readme::pall::c0"
+  ],
+  "rendered_response": {
+    "disclaimer": "This response was produced by a single configured model execution (gemini). No second, independent model interpretation was run for this turn, so no cross-model agreement, disagreement, or consensus claim applies.",
+    "evidence": [
+      {
+        "chunk_id": "readme::pall::c0",
+        "claim_linkage": "Operator-approved source documents must be placed under the `corpus/source/` directory.",
+        "document_id": "readme::pall::c0",
+        "excerpt": "# Corpus Placement Place the operator-approved source documents under: `corpus/source/` Do not include application code here. Recommended ingestion metadata: - source ID; - title; - author; - edition/date; - file name; - page or location; -",
+        "page": null,
+        "source": "readme",
+        "title": "README"
+      }
+    ],
+    "mive_assessment": null,
+    "operational_metrics": {
+      "comparison_latency_ms": null,
+      "context_characters": 427,
+      "context_documents": 1,
+      "error_stage": null,
+      "providers": [
+        {
+          "estimated_cost": null,
+          "input_tokens": 223,
+          "latency_ms": 11240.858,
+          "model": "gemini-2.5-flash",
+          "output_tokens": 1383,
+          "provider": "gemini",
+          "usage_is_estimated": false
+        }
+      ],
+      "question": "Where should operator-approved source documents be placed?",
+      "request_id": "5843a6cedc1c4beeaac44caeb9c08e5c",
+      "retrieval_latency_ms": 0.549,
+      "retrieved_chunks": 1,
+      "status": "success",
+      "timestamp": "2026-08-30T07:36:07.407461+00:00",
+      "total_estimated_cost": null,
+      "total_latency_ms": 11365.654
+    },
+    "primary_answer": "Operator-approved source documents are to be placed in the `corpus/source/` directory. This directory should not contain application code. It is recommended to include ingestion metadata such as source ID, title, author, date, file name, page or location, chunk ID, checksum, and ingestion version. A new clean index must be created from these sources unless an existing index is explicitly authorized for reuse by the operator.",
+    "question": "Where should operator-approved source documents be placed?",
+    "uncertainty": {
+      "reported": []
+    }
+  },
+  "rendered_response_sha256": "45564c2c483a8067b6fb66713465722934d59cb27500300846f3cadf417d6f31",
+  "repository_head": "28ad6be5f9f490be6a72c2e1f877d1282b01ba6b",
+  "requested_model": "gemini-2.5-flash",
+  "retrieved_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "run_id": "task21-real-gemini-2026-08-30T073555Z",
+  "run_mode": "REAL_GEMINI",
+  "sdk_internal_retry_status": "UNKNOWN_OR_SDK_CONTROLLED",
+  "source_path": "corpus/README.md",
+  "source_sha256": "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e8609cc03fa1ee",
+  "submitted_candidate_ids": [
+    "readme::pall::c0"
+  ],
+  "subset_checks": {
+    "admitted_subset_of_submitted": true,
+    "model_context_subset_of_admitted": true,
+    "rendered_subset_of_model_context": true,
+    "submitted_subset_of_retrieved": true
+  },
+  "turn_record": {
+    "closure_state": "COMPLETED",
+    "comparison_latency_ms": null,
+    "engine_ids": [
+      "gemini"
+    ],
+    "mive_overall_status": null,
+    "model_execution_count": 1
+  }
+}
