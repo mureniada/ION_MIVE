@@ -1,0 +1,221 @@
+{
+  "receipt_schema_id": "ION_TASK23_4_CONTROLLED_DECISION_PROOF_RECEIPT_V0_1",
+  "run_id": "TASK23_4_CONTROLLED_DECISION_PROOF_001",
+  "task": "TASK_23_4_CONTROLLED_DECISION_PROOF",
+  "baseline_commit": "88de1f6bbdb34b59b501436411bb8e9e136a78af",
+  "contract_path": "docs/ION_ADAPTIVE_DIALOGUE_ENGINE_CONTRACT_v1.md",
+  "contract_sha256": "1a8f48a1431456ce42b84f4b05df470eec359bf8cfdf5e0c9c7eea053172eb7c",
+  "engine_class": "app.modules.adaptive_dialogue.engine.AdaptiveDialogueEngine",
+  "valid_input_count": 10,
+  "invalid_input_count": 7,
+  "valid_results": [
+    {
+      "question": "What is ION?",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "?",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "it",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "clarify this please",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "What happens next?",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "Explain this in simple terms.",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "a  b   c",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "Why?",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "Continue.",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    },
+    {
+      "question": "What evidence supports this?",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED",
+      "first_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "second_result": {
+        "decision_type": "PROCEED",
+        "reason_code": "NO_RULE_TRIGGERED"
+      },
+      "repeatable": true
+    }
+  ],
+  "repeatability_pass": true,
+  "statelessness_pass": true,
+  "invalid_input_results": [
+    {
+      "case": "empty string",
+      "input": "''",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "whitespace-only string",
+      "input": "'   '",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "leading whitespace",
+      "input": "' leading'",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "trailing whitespace",
+      "input": "'trailing '",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "non-str: None",
+      "input": "None",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "non-str: int",
+      "input": "123",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    },
+    {
+      "case": "non-str: list",
+      "input": "[]",
+      "outcome": "REJECTED",
+      "exception_class": "DialogueInputError"
+    }
+  ],
+  "decision_invariant_results": {
+    "proceed_no_rule_triggered": {
+      "outcome": "VALID",
+      "decision_type": "PROCEED",
+      "reason_code": "NO_RULE_TRIGGERED"
+    },
+    "clarify_no_rule_triggered": {
+      "outcome": "INVALID_AS_REQUIRED",
+      "exception_class": "DialogueDecisionError"
+    }
+  },
+  "clarify_emission_count": 0,
+  "provider_execution_count": 0,
+  "retrieval_execution_count": 0,
+  "core_execution_count": 0,
+  "network_execution_count": 0,
+  "negative_authority": {
+    "forbidden_import_hits": [],
+    "forbidden_calls_during_guarded_evaluation": [],
+    "negative_authority_pass": true
+  },
+  "final_verdict": "PASS"
+}
