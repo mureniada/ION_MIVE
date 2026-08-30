@@ -82,6 +82,16 @@ from .ports import (
 # stage lifecycle event = (stage, status) e.g. ("retrieval", "started")
 ProgressCallback = Callable[[str, str], None]
 
+# TASK 22.3B1: an optional, best-effort capture seam for the TurnRecord a
+# turn already materializes. Invoked at most once per `ask()` call, only
+# once a real TurnRecord exists (never on a turn that produced none — see
+# `ask()`'s two invocation sites). An observer that raises is suppressed
+# (OD22-11): it may not alter AskResult return semantics, the original Core
+# exception, the governed-turn pipeline order, or TurnRecord materialization
+# itself. Nothing here places TurnRecord on AskResult, the rendered output,
+# or any transport payload — the observer is the only way out (OD22-01).
+TurnRecordObserver = Callable[[TurnRecord], None]
+
 
 def _turn_failure_for(exc: Exception) -> TurnFailure:
     """Bind why a turn failed, without widening what the system discloses.
@@ -185,8 +195,10 @@ class Core:
         top_k: int | None = None,
         *,
         progress: ProgressCallback | None = None,
+        on_turn_record: TurnRecordObserver | None = None,
     ) -> AskResult:
         emit = progress or (lambda *_: None)
+        capture = on_turn_record or (lambda _: None)
         request_id = uuid.uuid4().hex
         adapter_created_at = self._clock.now_iso()
         started = self._clock.monotonic_ms()
@@ -397,12 +409,13 @@ class Core:
             # failed. The emitted success sequence is unchanged either way.
             #
             # The record is EPHEMERAL at v0.1 (D18-06): held as a local value only.
-            # It is deliberately not returned, not placed in AskResult, not rendered,
-            # not emitted, not logged and not persisted. Exposing it anywhere is a
-            # later, separately authorized task.
+            # It is deliberately not placed in AskResult, not rendered, not
+            # emitted, not logged and not persisted. The only exposure path is
+            # the optional `on_turn_record` capture seam immediately below
+            # (TASK 22.3B1 / OD22-01) — never a return value, never transport.
             turn_closed_at = self._clock.now_iso()
             turn_record_attempted = True
-            turn_record = self._materialize_turn_record(  # noqa: F841 - see above
+            turn_record = self._materialize_turn_record(
                 turn_id=request_id,
                 question=q,
                 governed_basis=governed_evidence,
@@ -417,6 +430,16 @@ class Core:
                 comparison_latency_ms=None,
                 pipeline_latency_ms=total_ms,
             )
+
+            # Best-effort capture (OD22-11): an observer exception is
+            # suppressed here and never allowed to reach the caller, so it
+            # can neither change this successful AskResult nor be mistaken
+            # for a turn failure. Invoked exactly once, only now that a real
+            # COMPLETED TurnRecord exists.
+            try:
+                capture(turn_record)
+            except Exception:
+                pass
 
             emit("answer", "ready")
 
@@ -443,7 +466,7 @@ class Core:
             if not turn_record_attempted:
                 turn_record_attempted = True
                 try:
-                    self._materialize_failed_turn_record(
+                    failed_record = self._materialize_failed_turn_record(
                         turn_id=request_id,
                         exc=original_exc,
                         turn_started_at=adapter_created_at,
@@ -458,6 +481,14 @@ class Core:
                         comparison_latency_ms=comparison_ms,
                         pipeline_latency_ms=total_ms,
                     )
+                    # Best-effort capture (OD22-11), same guarantee as the
+                    # success path: invoked exactly once, only now that a real
+                    # FAILED TurnRecord exists, and its own exception is
+                    # suppressed here rather than masking `original_exc` below.
+                    try:
+                        capture(failed_record)
+                    except Exception:
+                        pass
                 except Exception:
                     # Best-effort backstop. A secondary failure of the recording
                     # mechanism — including a clock that refuses to give a closing
