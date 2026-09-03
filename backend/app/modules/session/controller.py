@@ -2,11 +2,23 @@
 
 The Controller sits STRICTLY ABOVE `Core.ask()` (L22-07). It owns session
 identity, lifecycle, and ordered turn membership; it never re-implements,
-re-derives, or duplicates anything `Core.ask()` already does. Every turn is
-run by calling `Core.ask()` exactly once, through the frozen `on_turn_record`
-capture seam (TASK 22.3B1) — the Controller never touches retrieval,
-governance, the Model Gateway, or the renderer directly, and never reorders
-or reruns any stage of the governed pipeline underneath Core.
+re-derives, or duplicates anything `Core.ask()` already does. Every turn that
+runs is run by calling `Core.ask()` exactly once, through the frozen
+`on_turn_record` capture seam (TASK 22.3B1) — the Controller never touches
+retrieval, governance, the Model Gateway, or the renderer directly, and never
+reorders or reruns any stage of the governed pipeline underneath Core.
+
+Adaptive Dialogue seam (E1). Between admission and `Core.ask()`, `run_turn()`
+evaluates `AdaptiveDialogueEngine` exactly once per eligible interaction. On
+PROCEED the governed path below runs completely unchanged. On CLARIFY no turn
+runs at all: `Core.ask()` is never called, so there is no Core `request_id`,
+no Core-minted `turn_id`, no `TurnRecord`, and no `SessionTurnEntry` — the
+reserved ordinal is released WITHOUT being committed and is taken again by the
+next eligible interaction, and the session stays ACTIVE. The two outcomes are
+distinguishable by TYPE at the public boundary (`AskResult` versus
+`SessionClarificationOutcome`), never by a flag on a fabricated result. The
+engine decides only; every session-level consequence is this Controller's,
+and the Controller passes it nothing but a `DialogueTurnInput`.
 
 Because Core suppresses any exception the observer itself raises (OD22-11),
 the Controller cannot rely on the observer's own control flow to signal
@@ -61,8 +73,15 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from ..adaptive_dialogue import (
+    AdaptiveDialogueEngine,
+    DialogueDecisionType,
+    DialogueReasonCode,
+    DialogueTurnInput,
+)
 from ..turn_record import TurnClosureState, TurnRecord
 from .models import (
     ActiveTurnReservation,
@@ -116,6 +135,30 @@ class TurnRecordCaptureError(SessionControllerError):
     """
 
 
+@dataclass(frozen=True, kw_only=True)
+class SessionClarificationOutcome:
+    """What `run_turn()` returns when the dialogue layer answered CLARIFY.
+
+    A DISTINCT type, deliberately not an `AskResult` and deliberately not an
+    exception: a clarification is neither a governed answer nor a failure. It
+    is also not a `TurnRecord` and not a `SessionTurnEntry` — no Core turn was
+    started, so there is no turn identity to carry and none is invented here.
+
+    Exactly three fields. `turn_ordinal` is the ordinal that was RESERVED and
+    then released WITHOUT being committed (OD22-13's reserved/committed
+    distinction): the very next eligible interaction on this session takes
+    that same ordinal. `reason_code` names the deterministic rule that
+    actually fired. There is deliberately no field for clarification text, a
+    prompt, a confidence, a score, evidence, a turn id, or any minted
+    identifier — this type states that a turn did NOT run, and why, nothing
+    more.
+    """
+
+    session_id: str
+    turn_ordinal: int
+    reason_code: DialogueReasonCode
+
+
 class _SessionState:
     """Private mutable runtime state for one session. Never exposed publicly.
 
@@ -164,8 +207,17 @@ class SessionController:
     `Session`/`SessionTurnEntry` model types — never a second representation.
     """
 
-    def __init__(self, core: Core) -> None:
+    def __init__(
+        self, core: Core, dialogue_engine: AdaptiveDialogueEngine | None = None
+    ) -> None:
         self._core = core
+        # Injected so a test can substitute a spy/stub engine; defaulted so
+        # every existing construction site keeps working unchanged. The
+        # engine is stateless and carries no constructor argument of its own,
+        # so a default instance is not shared mutable state.
+        self._dialogue_engine = (
+            AdaptiveDialogueEngine() if dialogue_engine is None else dialogue_engine
+        )
         self._sessions: dict[str, _SessionState] = {}
         self._registry_lock = threading.Lock()
 
@@ -215,7 +267,7 @@ class SessionController:
     # ------------------------------------------------------------------ #
     def run_turn(
         self, session_id: str, question: str, top_k: int | None = None
-    ) -> AskResult:
+    ) -> AskResult | SessionClarificationOutcome:
         state = self._get_state(session_id)
 
         if not state.turn_lock.acquire(blocking=False):
@@ -232,6 +284,42 @@ class SessionController:
                     reservation_id=uuid.uuid4().hex, turn_ordinal=turn_ordinal,
                 )
                 state.active_reservation = reservation
+
+            # --- dialogue evaluation seam --------------------------------- #
+            # Strictly AFTER admission (CLOSED check, ordinal read, and the
+            # reservation above) and strictly BEFORE Core.ask(). Evaluated
+            # exactly once per eligible interaction — an interaction refused
+            # earlier by admission never reaches this point at all.
+            #
+            # The engine is handed a DialogueTurnInput and nothing else: no
+            # session identity, no ordinal, no history, no retrieval, no
+            # evidence, no governance, no model or provider handle, no
+            # renderer, and no persistence. It returns a decision; it does not
+            # act on one. Everything the CLARIFY branch below does is done by
+            # this Controller, not by the engine.
+            decision = self._dialogue_engine.evaluate(
+                DialogueTurnInput(question=question)
+            )
+
+            if decision.decision_type is DialogueDecisionType.CLARIFY:
+                # No Core.ask(). Therefore: no Core request_id, no Core-minted
+                # turn_id, no TurnRecord, no SessionTurnEntry, and no ordinal
+                # advancement — `turn_ordinal` stays RESERVED-but-uncommitted
+                # and is taken again by the next eligible interaction. The
+                # shared `finally` below releases the reservation and the
+                # turn lock on this path exactly as it does on every other,
+                # leaving the session ACTIVE. Nothing is fabricated here: a
+                # clarification did not produce a turn, and no history is
+                # written to claim otherwise.
+                return SessionClarificationOutcome(
+                    session_id=session_id,
+                    turn_ordinal=turn_ordinal,
+                    reason_code=decision.reason_code,
+                )
+
+            # PROCEED falls through to the pre-existing governed path below,
+            # unchanged: exactly one Core.ask(), the same capture seam, the
+            # same preservation rules.
 
             # At most one captured TurnRecord is ever expected. This list is
             # the Controller's own observation of what Core actually did —

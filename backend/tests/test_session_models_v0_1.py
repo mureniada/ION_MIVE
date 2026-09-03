@@ -407,6 +407,9 @@ FROZEN_MODEL_EXPORTS = frozenset({
 APPROVED_CONTROLLER_EXPORTS = frozenset({
     "SessionController", "SessionControllerError", "UnknownSessionError",
     "SessionClosedError", "ConcurrentTurnError", "TurnRecordCaptureError",
+    # E1: the Session-level CLARIFY outcome. A distinct public return type,
+    # never a variant of AskResult and never an exception.
+    "SessionClarificationOutcome",
 })
 
 

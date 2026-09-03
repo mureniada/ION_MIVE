@@ -866,10 +866,15 @@ def test_29_no_provider_referenced_in_controller():
 # --------------------------------------------------------------------- #
 # 30. no Adaptive Dialogue implementation
 # --------------------------------------------------------------------- #
-def test_30_no_adaptive_dialogue_reference():
-    """Checks actual code constructs (defs, classes, imports, identifiers
-    used in expressions) — not prose in comments/docstrings, which
-    legitimately documents that no dialogue instruction is stored."""
+def test_30_dialogue_reference_is_confined_to_the_authorized_seam():
+    """E1 wires the Controller to the Adaptive Dialogue engine, so a blanket
+    "no dialogue identifier anywhere" assertion is no longer the law. What
+    survives unchanged is the REASON that assertion existed (OD22-08): the
+    Controller may CONSULT the dialogue layer, but no dialogue content may
+    enter session state. This checks the narrower, still-true invariant —
+    the only dialogue names the Controller uses are the decision vocabulary
+    and the engine itself, and no dialogue STATE/memory/history/profile type
+    is referenced at all."""
     tree = ast.parse(inspect.getsource(session_controller_module))
     identifiers = set()
     for node in ast.walk(tree):
@@ -884,7 +889,20 @@ def test_30_no_adaptive_dialogue_reference():
         elif isinstance(node, ast.Import):
             identifiers.update(alias.name for alias in node.names)
 
-    assert not any("dialogue" in name.lower() for name in identifiers)
+    dialogue_names = {n for n in identifiers if "dialogue" in n.lower()}
+    assert dialogue_names == {
+        "adaptive_dialogue",
+        "AdaptiveDialogueEngine",
+        "DialogueDecisionType",
+        "DialogueReasonCode",
+        "DialogueTurnInput",
+        "_dialogue_engine",
+        "dialogue_engine",
+    }
+    # the forbidden shapes stay forbidden, structurally
+    for forbidden in ("DialogueState", "DialogueProfile", "DialogueMemory",
+                      "DialogueHistory", "ClarificationHistory"):
+        assert forbidden not in identifiers
 
 
 def test_package_exports_full_public_surface():
@@ -892,6 +910,7 @@ def test_package_exports_full_public_surface():
 
     assert set(session_pkg.__all__) == {
         "ActiveTurnReservation", "ConcurrentTurnError", "Session",
+        "SessionClarificationOutcome",
         "SessionClosedError", "SessionController", "SessionControllerError",
         "SessionModelError", "SessionStatus", "SessionTurnEntry",
         "TurnRecordCaptureError", "UnknownSessionError",
@@ -997,3 +1016,363 @@ def test_32_failure_in_session_a_does_not_mutate_session_b_history(monkeypatch):
     assert len(a_after.ordered_turns) == 1
     assert a_after.ordered_turns[0].turn_record.closure_state is TurnClosureState.FAILED
     assert a_after.session_id != b_after.session_id
+
+
+# ===================================================================== #
+# E1 — SessionController <-> AdaptiveDialogueEngine wiring
+#
+# Proves the seam sits AFTER session admission and the ActiveTurnReservation
+# and BEFORE Core.ask(); that PROCEED preserves the TASK 22 governed path
+# exactly; and that CLARIFY starts no Core turn, writes no history, consumes
+# no ordinal, releases the reservation, and is distinguishable by TYPE.
+# ===================================================================== #
+from app.modules.adaptive_dialogue import (  # noqa: E402
+    AdaptiveDialogueEngine,
+    DialogueDecision,
+    DialogueDecisionType,
+    DialogueReasonCode,
+    DialogueTurnInput,
+)
+from app.modules.session import SessionClarificationOutcome  # noqa: E402
+
+CLARIFY_Q = "???"          # no alphanumeric content -> the authorized rule
+PROCEED_Q = "Question"     # ordinary question -> PROCEED
+
+
+class _SpyEngine:
+    """Records every evaluate() call and what it was handed."""
+
+    def __init__(self, decision=None):
+        self.calls = []
+        self._decision = decision
+        self._real = AdaptiveDialogueEngine()
+
+    def evaluate(self, turn_input):
+        self.calls.append(turn_input)
+        if self._decision is not None:
+            return self._decision
+        return self._real.evaluate(turn_input)
+
+
+class _OrderRecordingCore:
+    """Delegates to a real Core but records WHEN ask() happened relative to
+    the dialogue evaluation, via a shared event log."""
+
+    def __init__(self, real_core, log):
+        self._real = real_core
+        self._log = log
+        self.calls = 0
+
+    def ask(self, question, top_k=None, *, progress=None, on_turn_record=None):
+        self.calls += 1
+        self._log.append("core.ask")
+        return self._real.ask(
+            question, top_k, progress=progress, on_turn_record=on_turn_record
+        )
+
+
+class _LoggingEngine:
+    def __init__(self, log, controller_probe):
+        self._log = log
+        self._probe = controller_probe
+        self._real = AdaptiveDialogueEngine()
+
+    def evaluate(self, turn_input):
+        self._log.append("dialogue.evaluate")
+        self._probe()
+        return self._real.evaluate(turn_input)
+
+
+# --------------------------------------------------------------------- #
+# T01/T02/T03 — ordering: admission -> reservation -> dialogue -> Core.ask
+# --------------------------------------------------------------------- #
+def test_e1_t01_t02_t03_dialogue_runs_after_reservation_and_before_core(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    log = []
+    spy_core = _OrderRecordingCore(_core(), log)
+
+    observed = {}
+    holder = {}
+
+    def probe():
+        # observed from INSIDE dialogue evaluation: the reservation already
+        # exists (T02) and the session is still ACTIVE (admission passed, T01)
+        snapshot = holder["controller"].get_session(holder["session_id"])
+        observed["active_turn"] = snapshot.active_turn
+        observed["status"] = snapshot.status
+        observed["core_calls_so_far"] = spy_core.calls
+
+    controller = SessionController(
+        core=spy_core, dialogue_engine=_LoggingEngine(log, probe)
+    )
+    session = controller.create_session()
+    holder["controller"] = controller
+    holder["session_id"] = session.session_id
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    assert log == ["dialogue.evaluate", "core.ask"]           # T03
+    assert observed["active_turn"] is not None                # T02
+    assert observed["active_turn"].turn_ordinal == 1
+    assert observed["status"] is SessionStatus.ACTIVE         # T01
+    assert observed["core_calls_so_far"] == 0                 # T03
+
+
+def test_e1_t01_admission_refusal_precedes_dialogue_entirely(monkeypatch):
+    """A CLOSED session and an unknown session are both refused BEFORE the
+    dialogue layer is consulted: admission is upstream of dialogue."""
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    spy = _SpyEngine()
+    controller = SessionController(core=_core(), dialogue_engine=spy)
+
+    session = controller.create_session()
+    controller.close_session(session.session_id)
+
+    with pytest.raises(SessionClosedError):
+        controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    with pytest.raises(UnknownSessionError):
+        controller.run_turn("no-such-session", PROCEED_Q, top_k=3)
+
+    assert spy.calls == []
+
+
+# --------------------------------------------------------------------- #
+# T04 — exactly one dialogue evaluation per eligible interaction
+# --------------------------------------------------------------------- #
+def test_e1_t04_one_dialogue_evaluation_per_interaction(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    spy = _SpyEngine()
+    controller = SessionController(core=_core(), dialogue_engine=spy)
+    session = controller.create_session()
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    assert len(spy.calls) == 1
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    assert len(spy.calls) == 2
+
+
+# --------------------------------------------------------------------- #
+# T05 — PROCEED causes exactly one Core.ask()
+# --------------------------------------------------------------------- #
+def test_e1_t05_proceed_calls_core_exactly_once(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    spy_core = _SpyCore(_core())
+    controller = SessionController(core=spy_core)
+    session = controller.create_session()
+
+    result = controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    assert len(spy_core.calls) == 1
+    assert isinstance(result, AskResult)
+
+
+# --------------------------------------------------------------------- #
+# T06/T07/T08/T09 — CLARIFY starts no Core turn and writes no history
+# --------------------------------------------------------------------- #
+def test_e1_t06_t07_t08_t09_clarify_starts_no_core_turn(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    spy_core = _SpyCore(_core())
+    controller = SessionController(core=spy_core)
+    session = controller.create_session()
+
+    outcome = controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+
+    assert spy_core.calls == []                                     # T06
+    assert isinstance(outcome, SessionClarificationOutcome)
+    assert not hasattr(outcome, "turn_id")                          # T07
+    assert not hasattr(outcome, "request_id")                       # T07
+
+    after = controller.get_session(session.session_id)
+    assert after.ordered_turns == ()                                # T08/T09
+
+
+# --------------------------------------------------------------------- #
+# T10/T13 — CLARIFY leaves next_turn_ordinal unchanged, and the very next
+#           eligible interaction takes that same ordinal
+# --------------------------------------------------------------------- #
+def test_e1_t10_t13_clarify_preserves_and_releases_the_ordinal(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    before = controller.get_session(session.session_id)
+    assert before.next_turn_ordinal == 1
+
+    outcome = controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+    assert outcome.turn_ordinal == 1
+
+    mid = controller.get_session(session.session_id)
+    assert mid.next_turn_ordinal == 1                                # T10
+
+    # T13: the same ordinal is genuinely reusable by a real turn
+    result = controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    assert isinstance(result, AskResult)
+
+    after = controller.get_session(session.session_id)
+    assert [e.turn_ordinal for e in after.ordered_turns] == [1]
+    assert after.next_turn_ordinal == 2
+
+
+# --------------------------------------------------------------------- #
+# T11/T12 — reservation released, session still ACTIVE, lock not leaked
+# --------------------------------------------------------------------- #
+def test_e1_t11_t12_clarify_releases_reservation_and_keeps_session_active(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+
+    after = controller.get_session(session.session_id)
+    assert after.active_turn is None                                 # T11
+    assert after.status is SessionStatus.ACTIVE                      # T12
+
+    # the turn lock was genuinely released: a further turn is admitted,
+    # and close_session() does not see a turn in flight
+    controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+    closed = controller.close_session(session.session_id)
+    assert closed.status is SessionStatus.CLOSED
+
+
+# --------------------------------------------------------------------- #
+# T14 — PROCEED preserves TASK 22 TurnRecord -> SessionTurnEntry behavior
+# --------------------------------------------------------------------- #
+def test_e1_t14_proceed_preserves_task22_history_behavior(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    after = controller.get_session(session.session_id)
+    assert [e.turn_ordinal for e in after.ordered_turns] == [1, 2]
+    assert after.next_turn_ordinal == 3
+    for entry in after.ordered_turns:
+        assert isinstance(entry, SessionTurnEntry)
+        assert entry.session_id == session.session_id
+        assert entry.turn_id == entry.turn_record.turn_id
+        assert entry.turn_record.closure_state is TurnClosureState.COMPLETED
+    assert len({e.turn_id for e in after.ordered_turns}) == 2
+
+
+def test_e1_t14_clarify_between_two_turns_leaves_history_contiguous(monkeypatch):
+    """The strongest ordinal-integrity case: a CLARIFY sandwiched between two
+    real turns must leave NO gap and NO fabricated entry."""
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+    controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    after = controller.get_session(session.session_id)
+    assert [e.turn_ordinal for e in after.ordered_turns] == [1, 2]
+    assert after.next_turn_ordinal == 3
+    assert after.active_turn is None
+    assert after.status is SessionStatus.ACTIVE
+
+
+# --------------------------------------------------------------------- #
+# T15 — CLARIFY outcome is distinguishable from AskResult (and is not a
+#       failure, not a TurnRecord, not a SessionTurnEntry)
+# --------------------------------------------------------------------- #
+def test_e1_t15_clarify_outcome_is_a_distinct_type(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    outcome = controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+    result = controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    assert isinstance(outcome, SessionClarificationOutcome)
+    assert not isinstance(outcome, AskResult)
+    assert not isinstance(outcome, (TurnRecord, SessionTurnEntry))
+    assert not isinstance(outcome, BaseException)
+    assert isinstance(result, AskResult)
+    assert type(outcome) is not type(result)
+
+    assert outcome.session_id == session.session_id
+    assert outcome.reason_code is DialogueReasonCode.QUESTION_HAS_NO_ANSWERABLE_CONTENT
+    assert dataclasses.is_dataclass(outcome)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        outcome.turn_ordinal = 99  # type: ignore[misc]
+
+
+def test_e1_t15_clarify_outcome_carries_no_forbidden_content(monkeypatch):
+    """OD22-08 applied to the new type: it states that a turn did NOT run,
+    and why — never evidence, model output, rendered text, or a turn id."""
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    controller = SessionController(core=_core())
+    session = controller.create_session()
+
+    outcome = controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+
+    field_names = {f.name for f in dataclasses.fields(outcome)}
+    assert field_names == {"session_id", "turn_ordinal", "reason_code"}
+    for forbidden in (
+        "turn_id", "request_id", "turn_record", "evidence", "rendered",
+        "clarification_prompt", "prompt", "text", "answer", "memory",
+        "history", "confidence", "score", "ive_reports", "mive_result",
+    ):
+        assert forbidden not in field_names
+
+
+# --------------------------------------------------------------------- #
+# T20 — the engine receives a DialogueTurnInput and NOTHING else: no
+#       retrieval, evidence, governance, model, provider, session, or
+#       persistence authority is handed to it.
+# --------------------------------------------------------------------- #
+def test_e1_t20_engine_receives_only_dialogue_turn_input(monkeypatch):
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    spy = _SpyEngine()
+    controller = SessionController(core=_core(), dialogue_engine=spy)
+    session = controller.create_session()
+
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    assert len(spy.calls) == 1
+    handed = spy.calls[0]
+    assert isinstance(handed, DialogueTurnInput)
+    assert handed.question == PROCEED_Q
+
+    field_names = {f.name for f in dataclasses.fields(handed)}
+    assert field_names == {"question"}
+    for forbidden in (
+        "session_id", "turn_ordinal", "top_k", "evidence", "candidates",
+        "governed_evidence", "model_context", "core", "controller",
+        "history", "ordered_turns", "turn_record", "provider", "engine",
+    ):
+        assert forbidden not in field_names
+
+
+def test_e1_t20_engine_is_called_with_exactly_one_positional_argument(monkeypatch):
+    """Nothing extra is smuggled in as a second argument or a kwarg."""
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+    seen = {}
+
+    class _StrictEngine:
+        def evaluate(self, turn_input, *args, **kwargs):
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+            return DialogueDecision(
+                decision_type=DialogueDecisionType.PROCEED,
+                reason_code=DialogueReasonCode.NO_RULE_TRIGGERED,
+            )
+
+    controller = SessionController(core=_core(), dialogue_engine=_StrictEngine())
+    session = controller.create_session()
+    controller.run_turn(session.session_id, PROCEED_Q, top_k=3)
+
+    assert seen["args"] == ()
+    assert seen["kwargs"] == {}
+
+
+# --------------------------------------------------------------------- #
+# default construction still wires a real engine (no silent no-op seam)
+# --------------------------------------------------------------------- #
+def test_e1_default_controller_wires_a_real_engine():
+    controller = SessionController(core=_core())
+    assert isinstance(controller._dialogue_engine, AdaptiveDialogueEngine)

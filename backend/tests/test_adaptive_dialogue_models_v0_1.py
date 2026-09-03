@@ -67,8 +67,11 @@ def test_dialogue_decision_type_exact_members():
 # 2. DialogueReasonCode has exactly NO_RULE_TRIGGERED
 # --------------------------------------------------------------------- #
 def test_dialogue_reason_code_exact_members():
-    assert {m.value for m in DialogueReasonCode} == {"NO_RULE_TRIGGERED"}
-    assert len(DialogueReasonCode) == 1
+    assert {m.value for m in DialogueReasonCode} == {
+        "NO_RULE_TRIGGERED",
+        "QUESTION_HAS_NO_ANSWERABLE_CONTENT",
+    }
+    assert len(DialogueReasonCode) == 2
 
 
 # --------------------------------------------------------------------- #

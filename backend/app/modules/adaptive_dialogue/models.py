@@ -58,9 +58,10 @@ class DialogueDecisionType(str, Enum):
     `CLARIFY` means the current dialogue input does not satisfy a frozen
     deterministic dialogue-clarity rule — it does not mean `TurnRecord`
     closure, a session state transition, `WAITING_FOR_USER`, rendering, or
-    sending text to the user. `CLARIFY` is declared vocabulary here, but see
-    `DialogueDecision`'s pairing invariant for why it is implementation-
-    unreachable in v0.1: no deterministic CLARIFY rule is authorized yet.
+    sending text to the user. As of E1, `CLARIFY` is reachable by exactly one
+    authorized deterministic rule, which carries its own reason code
+    (`QUESTION_HAS_NO_ANSWERABLE_CONTENT`); it remains unreachable paired
+    with `NO_RULE_TRIGGERED`, per `DialogueDecision`'s pairing invariant.
 
     Membership is closed. An unsupported or unknown value fails closed
     rather than being coerced to either member.
@@ -71,17 +72,24 @@ class DialogueDecisionType(str, Enum):
 
 
 class DialogueReasonCode(str, Enum):
-    """The closed v0.1 reason-code vocabulary. Exactly one member exists.
+    """The closed reason-code vocabulary. Exactly two members exist.
 
-    `NO_RULE_TRIGGERED` is the truthful code for every v0.1 evaluation,
-    because v0.1 authorizes no CLARIFY rule: the engine reaches `PROCEED` by
-    the ABSENCE of any triggered rule, not by evaluating and passing one. A
-    future, separately authorized CLARIFY rule mints its own new closed
-    member here; this module does not pre-declare a placeholder code for a
-    rule that does not yet exist.
+    `NO_RULE_TRIGGERED` is the truthful code whenever the engine reaches
+    `PROCEED` by the ABSENCE of any triggered rule, rather than by evaluating
+    and passing one. It remains the only code `PROCEED` ever carries.
+
+    `QUESTION_HAS_NO_ANSWERABLE_CONTENT` is the code minted by the single
+    deterministic CLARIFY rule authorized for E1 (see `engine.py`): the
+    question carries no alphanumeric character at all, so it states nothing
+    answerable. It is a STRUCTURAL observation about the question string
+    only — never a semantic-ambiguity threshold, a length heuristic, a
+    keyword rule, or any judgement about what the question means. Each
+    further CLARIFY rule, if ever authorized, mints its own new member here;
+    this module pre-declares no code for a rule that does not yet exist.
     """
 
     NO_RULE_TRIGGERED = "NO_RULE_TRIGGERED"
+    QUESTION_HAS_NO_ANSWERABLE_CONTENT = "QUESTION_HAS_NO_ANSWERABLE_CONTENT"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -132,10 +140,9 @@ class DialogueDecision:
     `reason_code = NO_RULE_TRIGGERED`. `NO_RULE_TRIGGERED` is definitionally
     the code for the no-rule-fired default — it states that no deterministic
     clarification rule fired, which only `PROCEED` can truthfully carry.
-    This is the sole v0.1 cross-field pairing invariant required, and it is
-    what makes CLARIFY's vocabulary-valid/implementation-unreachable status
-    a structural property of construction, not a fact that merely happens
-    to hold because no caller has constructed the invalid pair.
+    This remains the sole cross-field pairing invariant required: a
+    `CLARIFY` decision must always name the rule that actually fired, and can
+    therefore never be expressed with the no-rule-fired code.
     """
 
     decision_type: DialogueDecisionType

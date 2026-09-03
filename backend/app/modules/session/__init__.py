@@ -9,6 +9,7 @@ particular `_SessionState` stays internal to `controller.py`.
 
 from .controller import (
     ConcurrentTurnError,
+    SessionClarificationOutcome,
     SessionClosedError,
     SessionController,
     SessionControllerError,
@@ -27,6 +28,7 @@ __all__ = [
     "ActiveTurnReservation",
     "ConcurrentTurnError",
     "Session",
+    "SessionClarificationOutcome",
     "SessionClosedError",
     "SessionController",
     "SessionControllerError",

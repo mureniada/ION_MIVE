@@ -2,8 +2,10 @@
 
 Scope is deliberately narrow: this proves ONLY `app/modules/adaptive_dialogue/
 engine.py`'s `evaluate()` behavior against the frozen contract
-`docs/ION_ADAPTIVE_DIALOGUE_ENGINE_CONTRACT_v1.md` — v0.1's unconditional
-PROCEED/NO_RULE_TRIGGERED law, purity, determinism, and statelessness. No
+`docs/ION_ADAPTIVE_DIALOGUE_ENGINE_CONTRACT_v1.md` and the single
+deterministic CLARIFY rule authorized by E1 — the PROCEED/NO_RULE_TRIGGERED
+default, the one structural no-alphanumeric-content CLARIFY rule and its own
+stable reason code, purity, determinism, and statelessness. No
 Core, no SessionController, no provider SDK, and no network/filesystem
 capability is reachable from anything below; this file proves that
 structurally, not by convention.
@@ -117,21 +119,70 @@ def test_evaluate_various_valid_questions_all_proceed(text):
 
 
 # --------------------------------------------------------------------- #
-# 18. engine never emits CLARIFY in v0.1
+# 18. the ONE authorized rule is the only path to CLARIFY: questions that
+#     carry alphanumeric content still PROCEED, however vague, however
+#     short, and however much they "look like" they need clarification.
+#     E1 authorizes a STRUCTURAL rule only — never a semantic, length,
+#     pronoun, or keyword heuristic.
 # --------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "text",
     [
-        "?",
         "what",
         "please clarify this for me",
         "ambiguous pronoun: it, they, that thing",
+        "x",
+        "? a ?",
+        "1",
     ],
 )
-def test_evaluate_never_emits_clarify(text):
+def test_evaluate_emits_clarify_only_via_the_authorized_rule(text):
     engine = AdaptiveDialogueEngine()
     decision = engine.evaluate(_question(text))
-    assert decision.decision_type is not DialogueDecisionType.CLARIFY
+    assert decision.decision_type is DialogueDecisionType.PROCEED
+    assert decision.reason_code is DialogueReasonCode.NO_RULE_TRIGGERED
+
+
+# --------------------------------------------------------------------- #
+# 18b. T16/T17/T19 — the single deterministic CLARIFY rule is REACHABLE,
+#      and carries its own stable reason code (never NO_RULE_TRIGGERED).
+# --------------------------------------------------------------------- #
+@pytest.mark.parametrize("text", ["?", "???", "...", "!!!", "-", "??!!"])
+def test_evaluate_no_alphanumeric_content_yields_clarify(text):
+    engine = AdaptiveDialogueEngine()
+    decision = engine.evaluate(_question(text))
+    assert decision.decision_type is DialogueDecisionType.CLARIFY
+    assert (
+        decision.reason_code
+        is DialogueReasonCode.QUESTION_HAS_NO_ANSWERABLE_CONTENT
+    )
+    assert decision.reason_code is not DialogueReasonCode.NO_RULE_TRIGGERED
+
+
+# --------------------------------------------------------------------- #
+# 18c. T16 — exactly ONE rule is reachable: across a broad input sweep the
+#      engine emits no reason code beyond the two authorized ones, and
+#      CLARIFY is reached by the alphanumeric rule and nothing else.
+# --------------------------------------------------------------------- #
+def test_exactly_one_clarify_rule_is_reachable():
+    engine = AdaptiveDialogueEngine()
+    samples = [
+        "a", "1", "?", "???", "...", "a?", "?a", "  a", "a b c",
+        "!!!", "@#$%^&*()", "why", "-", "_", "0",
+        "Explain the retrieval contract in detail.",
+    ]
+    for text in samples:
+        decision = engine.evaluate(DialogueTurnInput(question=text.strip()))
+        expected_clarify = not any(ch.isalnum() for ch in text.strip())
+        if expected_clarify:
+            assert decision.decision_type is DialogueDecisionType.CLARIFY
+            assert (
+                decision.reason_code
+                is DialogueReasonCode.QUESTION_HAS_NO_ANSWERABLE_CONTENT
+            )
+        else:
+            assert decision.decision_type is DialogueDecisionType.PROCEED
+            assert decision.reason_code is DialogueReasonCode.NO_RULE_TRIGGERED
 
 
 # --------------------------------------------------------------------- #
