@@ -25,6 +25,7 @@ from .modules.openai_ive import OpenAIIVE
 from .modules.renderer import DeterministicRenderer
 from .modules.retrieval.embeddings import HashingEmbedder, LocalEmbedder, OpenAIEmbedder
 from .modules.retrieval.qdrant_store import QdrantRetrieval
+from .modules.session import SessionController
 from .modules.telemetry import PricingTable
 
 
@@ -120,3 +121,13 @@ def build_core(settings: Settings) -> Core:
         settings=settings,
         execution_profile=profile,
     )
+
+
+def build_session_controller(core: Core) -> SessionController:
+    """Composition seam for the pilot transport (TASK E4C).
+
+    Wraps the ONE already-constructed Core instance passed in — never builds
+    a second Core or a second retrieval stack. `SessionController`'s own
+    default `AdaptiveDialogueEngine` is accepted as-is (no override).
+    """
+    return SessionController(core=core)
