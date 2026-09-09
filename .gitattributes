@@ -1,3 +1,12 @@
 /.gitattributes text eol=lf
 /backend/t4/** text eol=lf
 /rfc8785.txt text eol=lf
+
+# VOE Dialogue Profile runtime behavioral assets: byte-identity is a hard
+# runtime contract (app/modules/voe_profile/loader.py pins an exact SHA-256
+# per file and a combined runtime behavioral fingerprint). These must never
+# be line-ending-normalized on any platform or checkout, in either
+# direction — `binary` disables text/diff/merge conversion entirely so a
+# checkout reproduces the committed bytes exactly, regardless of
+# core.autocrlf on the machine performing the checkout.
+/backend/app/modules/voe_profile/assets/* binary
