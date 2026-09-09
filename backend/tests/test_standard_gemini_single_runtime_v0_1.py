@@ -332,6 +332,9 @@ def _core(*, gemini_error=None, retrieved=("EV-1", "EV-2"), submitted=("EV-1", "
     core._mive = _Mive()
     core._renderer = renderer
     core._pricing = _Pricing()
+    # Gate 4: disabled-path state — no test in this file wires a composer.
+    core._composer = None
+    core._voe_runtime_profile = None
     return core, gemini_engine, renderer
 
 

@@ -23,10 +23,12 @@ from .modules.mive import MIVEComparator
 from .modules.model_gateway import ModelGateway
 from .modules.openai_ive import OpenAIIVE
 from .modules.renderer import DeterministicRenderer
+from .modules.response_composer import VOEResponseComposer
 from .modules.retrieval.embeddings import HashingEmbedder, LocalEmbedder, OpenAIEmbedder
 from .modules.retrieval.qdrant_store import QdrantRetrieval
 from .modules.session import SessionController
 from .modules.telemetry import PricingTable
+from .modules.voe_profile import VOEProfileLoadError, VOERuntimeProfile, resolve_voe_profile
 
 
 def build_embedder(settings: Settings) -> EmbeddingPort:
@@ -101,6 +103,65 @@ def _build_engines(profile: ExecutionProfile, settings: Settings) -> dict:
     return engines
 
 
+def build_voe_composer(
+    profile: ExecutionProfile, settings: Settings
+) -> tuple[VOEResponseComposer | None, VOERuntimeProfile | None]:
+    """Construct the VOE Response Composer and its bound runtime profile, or
+    (None, None) if the profile is disabled (Gate 4).
+
+    Optimistic construction, mirroring `_build_engines`' own discipline for
+    provider credentials: a bad or missing bundle here degrades to
+    (None, None) rather than raising — this function never crashes
+    `build_core()`. The actual fail-closed gate is `config_check.require_ready`,
+    which independently re-resolves the SAME profile, per request, and
+    refuses the request before any turn runs if it is invalid. That
+    separation is deliberate: it is the exact shape `_build_engines`/
+    `require_ready` already use for provider credentials, applied here to
+    the VOE bundle instead.
+
+    First-release provider/model rule (Gate 3A, Task D, option 1 — the
+    minimum safe choice): the composer reuses the SAME provider and
+    requested model as the active SINGLE IVE engine, as a semantically
+    separate execution — `EXECUTION PROFILE != DIALOGUE PROFILE` remains
+    true; this is implementation/configuration reuse only, never a shared
+    instance and never a new execution-policy field. A SECOND, independent
+    raw backend instance is always constructed: this function never reaches
+    into `GeminiIVE._backend`/`OpenAIIVE._backend`, and never shares one
+    backend object between the IVE path and the composer path.
+    """
+    if not settings.voe_profile_enabled:
+        return None, None
+
+    try:
+        voe_runtime_profile = resolve_voe_profile(
+            enabled=True, bundle_dir=settings.voe_profile_bundle_dir
+        )
+    except VOEProfileLoadError:
+        return None, None
+
+    from .modules.gemini_ive.backend import GeminiBackend
+    from .modules.openai_ive.backend import OpenAIBackend
+
+    # SINGLE mode: exactly one engine id, already validated by
+    # `ExecutionProfile.__post_init__` and `_build_engines` above.
+    engine_id = profile.engine_ids[0]
+    if engine_id == "gemini":
+        backend = GeminiBackend(settings.gemini_model)
+        requested_model = settings.gemini_model
+    elif engine_id == "openai":
+        backend = OpenAIBackend(settings.openai_model)
+        requested_model = settings.openai_model
+    else:
+        raise ConfigurationError(
+            f"execution profile names an unrecognized engine id: {engine_id!r}"
+        )
+
+    composer = VOEResponseComposer(
+        backend=backend, provider=engine_id, requested_model=requested_model
+    )
+    return composer, voe_runtime_profile
+
+
 def build_core(settings: Settings) -> Core:
     """Production wiring: real Qdrant + the provider backends the active
     Model Execution Profile names (lazy SDKs)."""
@@ -109,6 +170,7 @@ def build_core(settings: Settings) -> Core:
 
     profile = resolve_active_execution_profile(settings)
     model_gateway = ModelGateway(_build_engines(profile, settings))
+    composer, voe_runtime_profile = build_voe_composer(profile, settings)
 
     return Core(
         retrieval=retrieval,
@@ -120,6 +182,8 @@ def build_core(settings: Settings) -> Core:
         clock=SystemClock(),
         settings=settings,
         execution_profile=profile,
+        composer=composer,
+        voe_runtime_profile=voe_runtime_profile,
     )
 
 

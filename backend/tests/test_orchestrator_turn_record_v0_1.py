@@ -317,6 +317,9 @@ def _core(
     core._mive = _Mive(order=order, error=mive_error)
     core._renderer = renderer
     core._pricing = _Pricing(error=pricing_error)
+    # Gate 4: disabled-path state — no test in this file wires a composer.
+    core._composer = None
+    core._voe_runtime_profile = None
     return core, pack, clock, renderer
 
 

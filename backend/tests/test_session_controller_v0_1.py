@@ -255,6 +255,9 @@ def _core(
     core._mive = _Mive()
     core._renderer = renderer if renderer is not None else _Renderer()
     core._pricing = _Pricing()
+    # Gate 4: disabled-path state — no test in this file wires a composer.
+    core._composer = None
+    core._voe_runtime_profile = None
     return core
 
 
@@ -1182,6 +1185,35 @@ def test_e1_t06_t07_t08_t09_clarify_starts_no_core_turn(monkeypatch):
     assert isinstance(outcome, SessionClarificationOutcome)
     assert not hasattr(outcome, "turn_id")                          # T07
     assert not hasattr(outcome, "request_id")                       # T07
+
+
+def test_e1_gate4_clarify_never_invokes_a_configured_composer(monkeypatch):
+    """Gate 4: CLARIFY means Core.ask() is never reached (T06 above already
+    proves this), and composition lives entirely inside Core.ask() — so this
+    makes that guarantee explicit rather than merely inferred: a real
+    composer, wired and ready to record calls, must see zero of them."""
+    _patch_gate(monkeypatch, ("EV-1", "EV-2"))
+
+    class _RecordingComposer:
+        def __init__(self):
+            self.calls = 0
+
+        def compose(self, composer_input):
+            self.calls += 1
+            raise AssertionError("composer must never be invoked on a CLARIFY turn")
+
+    composer = _RecordingComposer()
+    core = _core()
+    core._composer = composer
+    core._voe_runtime_profile = SimpleNamespace()  # shape irrelevant; never read
+
+    controller = SessionController(core=core)
+    session = controller.create_session()
+
+    outcome = controller.run_turn(session.session_id, CLARIFY_Q, top_k=3)
+
+    assert isinstance(outcome, SessionClarificationOutcome)
+    assert composer.calls == 0
 
     after = controller.get_session(session.session_id)
     assert after.ordered_turns == ()                                # T08/T09

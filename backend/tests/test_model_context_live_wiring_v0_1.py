@@ -279,6 +279,9 @@ def _core(document_ids=("D1", "D2")):
     core._mive = _Mive()
     core._renderer = _Renderer()
     core._pricing = _Pricing()
+    # Gate 4: disabled-path state — no test in this file wires a composer.
+    core._composer = None
+    core._voe_runtime_profile = None
     return core, pack, engines
 
 

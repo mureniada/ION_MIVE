@@ -1,15 +1,32 @@
 """TASK 20: readiness is POLICY-DRIVEN. `require_ready` requires exactly the
 provider configuration the ACTIVE, already-resolved `ExecutionProfile` names
 — never a fixed pair, and never silently skipped for an engine a profile
-does name."""
+does name.
+
+Gate 4: `require_ready` also independently re-verifies the VOE Dialogue
+Profile bundle whenever `VOE_PROFILE_ENABLED=true` — turning "the loader is
+fail-closed when invoked" into "a bad or missing bundle prevents request
+execution" via the SAME readiness gate, not a parallel one.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
 
 from app.config_check import require_ready
 from app.core.config import Settings
 from app.core.errors import ConfigurationError
 from app.modules.execution_profile import ExecutionMode, ExecutionProfile, STANDARD_GEMINI
+from app.modules.voe_profile.loader import RUNTIME_BEHAVIORAL_FILES
 from tests.util import raises
+
+REAL_VOE_PACK_DIR = Path(
+    r"C:\Users\murenia\Documents\Projects\ION_ON\ION_PROFILE_INTEGRATION"
+    r"\VOE-DIALOGUE-PROFILE\v0.2\00_INPUT_IMMUTABLE\EXTRACTED_PACK"
+    r"\VOE_DIALOGUE_PROFILE_RUNTIME_PACK_v0.2"
+)
 
 
 def _settings(**overrides):
@@ -85,3 +102,82 @@ def test_rejects_non_header_safe_key():
     env = {"GEMINI_API_KEY": "gk abc"}
     with raises(ConfigurationError):
         require_ready(_settings(), STANDARD_GEMINI, env=env)
+
+
+# --------------------------------------------------------------------- #
+# Gate 4: VOE profile readiness — independent of, and additive to, the
+# engine-credential checks above.
+# --------------------------------------------------------------------- #
+requires_real_voe_pack = pytest.mark.skipif(
+    not REAL_VOE_PACK_DIR.is_dir(),
+    reason="external VOE source preparation workspace not present on this machine",
+)
+
+
+def _ready_env():
+    return {"GEMINI_API_KEY": "gk-abc123", "OPENAI_API_KEY": "sk-abc123"}
+
+
+def test_voe_disabled_skips_the_voe_check_entirely():
+    """VOE_PROFILE_ENABLED=false (the default): readiness behaves exactly as
+    it did before Gate 4 — a nonexistent bundle_dir is never even inspected."""
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "false",
+        "VOE_PROFILE_BUNDLE_DIR": "C:/definitely/does/not/exist",
+    })
+    require_ready(settings, STANDARD_GEMINI, env={"GEMINI_API_KEY": "gk-abc123"})  # must not raise
+
+
+@requires_real_voe_pack
+def test_voe_enabled_with_valid_bundle_succeeds():
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "OPENAI_MODEL": "gpt-5.4-mini",
+        "VOE_PROFILE_ENABLED": "true",
+        "VOE_PROFILE_BUNDLE_DIR": str(REAL_VOE_PACK_DIR),
+    })
+    require_ready(settings, STANDARD_GEMINI, env=_ready_env())  # must not raise
+
+
+def test_voe_enabled_with_missing_bundle_dir_fails_closed():
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "true",
+        "VOE_PROFILE_BUNDLE_DIR": "C:/definitely/does/not/exist",
+    })
+    with raises(ConfigurationError):
+        require_ready(settings, STANDARD_GEMINI, env=_ready_env())
+
+
+@requires_real_voe_pack
+def test_voe_enabled_with_hash_mismatch_fails_closed(tmp_path):
+    for filename, _, _ in RUNTIME_BEHAVIORAL_FILES:
+        (tmp_path / filename).write_bytes((REAL_VOE_PACK_DIR / filename).read_bytes())
+    # Corrupt one file's content without changing its byte count.
+    target = tmp_path / RUNTIME_BEHAVIORAL_FILES[0][0]
+    original = target.read_bytes()
+    mutated_byte = (original[0] + 1) % 256
+    target.write_bytes(bytes([mutated_byte]) + original[1:])
+
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "true",
+        "VOE_PROFILE_BUNDLE_DIR": str(tmp_path),
+    })
+    with raises(ConfigurationError):
+        require_ready(settings, STANDARD_GEMINI, env=_ready_env())
+
+
+def test_voe_readiness_failure_message_never_exposes_a_secret_value():
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "true",
+        "VOE_PROFILE_BUNDLE_DIR": "C:/definitely/does/not/exist",
+    })
+    try:
+        require_ready(settings, STANDARD_GEMINI, env=_ready_env())
+        assert False, "expected ConfigurationError"
+    except ConfigurationError as exc:
+        for secret in _ready_env().values():
+            assert secret not in exc.message

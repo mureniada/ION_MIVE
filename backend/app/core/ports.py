@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     # runtime-imports the Product module that defines its payload type.
     from ..modules.model_context import EvidenceContextItem, ModelContextAssembly
 
+    # Type-only, same discipline: this module never runtime-imports the
+    # response_composer package that defines these payload types (see
+    # ResponseComposerPort below). No composer is wired to Core yet.
+    from ..modules.response_composer import ComposerInput, ResponseComposerResult
+
 
 @runtime_checkable
 class EmbeddingPort(Protocol):
@@ -109,6 +114,57 @@ class RendererPort(Protocol):
         unwired; this is not a substitute for it).
         """
         ...
+
+
+@runtime_checkable
+class ResponseComposerPort(Protocol):
+    """Composes user-facing text from an already-closed IVE interpretation,
+    under a versioned VOE Dialogue Profile (Gate 1 contract only).
+
+    A distinct responsibility from every other port here, and never a
+    substitute for one: `IVEPort` interprets an authorized Model Context into
+    evidence-grounded findings; `RendererPort` deterministically packages
+    those findings with no model call at all. This port RESTYLES an
+    already-produced `IVEReport` projection for presentation — it never
+    re-interprets evidence, never runs before an `IVEReport` exists, and
+    never runs in place of either of those ports. It does not inherit from,
+    extend, or weaken `IVEPort`, `RendererPort`, or the Model Gateway's
+    execution contract; none of those changes because this Protocol exists.
+
+    Implementations receive only a `ComposerInput`: the normalized question,
+    a read-only projection of one `IVEReport` (abstract, highlights,
+    per-claim statement/confidence — Gate 3B removed the third field this
+    claim projection used to carry, `evidence_document_ids`: v0.1
+    composition has no functional use for any evidence-identity value, so
+    none crosses this boundary — uncertainty, confidence), and a verified
+    `VOERuntimeProfile` — the VOE profile's identity plus the actual
+    behavioral text a composer needs. No evidence content or
+    evidence-identity value of any kind (title, content, source_identity,
+    page, chunk_id, or a document/candidate id), no `ModelContextAssembly`,
+    no `GovernedEvidenceSet`, no raw retrieved `Evidence`, no governance
+    object, no session or conversation state, no `Settings`, and no provider
+    credential is reachable through this port's signature — see
+    `modules/response_composer/models.py`.
+
+    Returns a `ResponseComposerResult` (Gate 3B) — the composed content plus
+    the raw execution facts (`provider`, `requested_model`, `input_tokens`,
+    `output_tokens`, `usage_is_estimated`, `latency_ms`) the provider call
+    actually produced, kept structurally separate from the composed content
+    itself (`COMPOSED CONTENT != EXECUTION PROVENANCE`). Never a cost, a
+    fallback/success status, or a `TurnRecord`/transport field — those
+    belong to a later, separately authorized caller.
+
+    Gate 1 defined this Protocol and its data shapes; Gate 3 added the one
+    authorized implementation, `VOEResponseComposer`
+    (`modules/response_composer/composer.py`), whose `provider`/
+    `requested_model` identity is supplied explicitly at construction time
+    by whichever future composition root builds it — never inferred from
+    `ExecutionProfile`, `Settings`, or the backend object itself. Neither
+    this Protocol nor its implementation is constructed or called anywhere
+    in Core, `app.container`, or any runtime entry point at this stage.
+    """
+
+    def compose(self, composer_input: "ComposerInput") -> "ResponseComposerResult": ...
 
 
 @runtime_checkable

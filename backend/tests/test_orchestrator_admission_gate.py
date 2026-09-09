@@ -174,6 +174,9 @@ def _core(bridge=None):
     core._mive = object()
     core._renderer = object()
     core._pricing = object()
+    # Gate 4: disabled-path state — no test in this file wires a composer.
+    core._composer = None
+    core._voe_runtime_profile = None
     return core, pack, bridge
 
 

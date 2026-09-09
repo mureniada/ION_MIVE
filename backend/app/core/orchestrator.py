@@ -53,6 +53,13 @@ from ..modules.model_context import (
     build_model_context,
 )
 from ..modules.model_gateway import ModelGateway
+from ..modules.response_composer import (
+    ComposerClaimView,
+    ComposerInput,
+    ResponseComposerOutputError,
+    ResponseComposerProviderError,
+    ResponseComposerResult,
+)
 from ..modules.telemetry.pricing import PRICING_AS_OF
 from ..modules.turn_record import (
     ExecutionProfileBinding,
@@ -63,6 +70,7 @@ from ..modules.turn_record import (
     materialize_failed_turn_record,
     materialize_turn_record,
 )
+from ..modules.voe_profile import VOERuntimeProfile
 from .models import (
     AskResult,
     Evidence,
@@ -76,6 +84,7 @@ from .ports import (
     MIVEPort,
     PricingPort,
     RendererPort,
+    ResponseComposerPort,
     RetrievalPort,
 )
 
@@ -166,6 +175,8 @@ class Core:
         clock: ClockPort,
         settings: Settings,
         execution_profile: ExecutionProfile,
+        composer: ResponseComposerPort | None = None,
+        voe_runtime_profile: VOERuntimeProfile | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._build = context_pack_builder
@@ -177,6 +188,12 @@ class Core:
         self._settings = settings
         self._execution_profile = execution_profile
         self._core_adapter = CoreAdapter()
+        # Gate 4: both None unless VOE_PROFILE_ENABLED=true resolved a
+        # verified bundle at composition-root time (app/container.py).
+        # Every existing construction site that supplies neither argument
+        # keeps working unchanged — the exact pre-profile path.
+        self._composer = composer
+        self._voe_runtime_profile = voe_runtime_profile
 
     @property
     def execution_profile(self) -> ExecutionProfile:
@@ -392,12 +409,66 @@ class Core:
             # renderer may resolve this report's citations against (D20-20):
             # never the broader `evidence` list retrieval returned, which may
             # include candidates governance never admitted into model input.
-            rendered = self._renderer.render_single(
+            base_rendered = self._renderer.render_single(
                 question=q,
                 report=report,
                 authorized_evidence_basis=model_input.evidence,
                 metrics_dict=metrics.to_dict(),
             )
+
+            # --- VOE composition (Gate 4): additive, disabled by default ---
+            # Reached only after the deterministic base answer above already
+            # exists in full. `self._composer` is None unless
+            # VOE_PROFILE_ENABLED=true resolved a verified VOERuntimeProfile
+            # at composition-root time (app/container.py) — RendererPort and
+            # `base_rendered` itself are never touched by this block;
+            # `final_rendered` is a fresh shallow copy when composition runs,
+            # and is `base_rendered` BY REFERENCE, untouched, when it does
+            # not — the exact pre-profile object.
+            #
+            # A composer failure never fails the turn (TRUTH > STYLE): the
+            # already-correct, already evidence-grounded `base_rendered`
+            # answer is what ships, and the failure is disclosed — never
+            # hidden — in operational_metrics["composition"]. Only the two
+            # composer-local error types are caught; any other exception is
+            # a genuine defect and propagates as a real turn failure, exactly
+            # like every other unexpected exception in this method.
+            composition_metrics: dict | None = None
+            final_answer = base_rendered["primary_answer"]
+
+            if self._composer is not None:
+                composer_input = self._build_composer_input(q, report)
+                try:
+                    composition_result = self._composer.compose(composer_input)
+                except ResponseComposerProviderError:
+                    composition_metrics = self._composition_fallback_metrics(
+                        "FALLBACK_PROVIDER_ERROR"
+                    )
+                except ResponseComposerOutputError:
+                    composition_metrics = self._composition_fallback_metrics(
+                        "FALLBACK_MALFORMED_OUTPUT"
+                    )
+                else:
+                    final_answer = composition_result.response.composed_text
+                    composition_metrics = self._composition_success_metrics(
+                        composition_result
+                    )
+
+            if composition_metrics is None:
+                # Disabled, or no composer configured: the exact pre-profile
+                # object, untouched — never even shallow-copied, and no
+                # "composition" key anywhere in its metrics.
+                final_rendered = base_rendered
+                final_metrics_dict = metrics.to_dict()
+            else:
+                # One final metrics snapshot, built once, used for both
+                # `final_rendered["operational_metrics"]` and
+                # `AskResult.metrics` below — never two independently
+                # constructed representations of the same turn.
+                final_metrics_dict = {**metrics.to_dict(), "composition": composition_metrics}
+                final_rendered = dict(base_rendered)
+                final_rendered["primary_answer"] = final_answer
+                final_rendered["operational_metrics"] = final_metrics_dict
 
             # --- turn closure: exactly one immutable Turn Record ---
             # Reached only after the renderer completed, so the record states a turn
@@ -413,6 +484,13 @@ class Core:
             # emitted, not logged and not persisted. The only exposure path is
             # the optional `on_turn_record` capture seam immediately below
             # (TASK 22.3B1 / OD22-01) — never a return value, never transport.
+            #
+            # Deliberately unaware of composition (Gate 4): this record binds
+            # the ONE IVE model execution this turn ran, exactly as it always
+            # has. A VOE composition attempt is not an IVE execution and is
+            # never represented here — durable composition provenance
+            # (a `composition_execution` binding or equivalent) remains
+            # deferred, separately authorized work.
             turn_closed_at = self._clock.now_iso()
             turn_record_attempted = True
             turn_record = self._materialize_turn_record(
@@ -447,10 +525,10 @@ class Core:
                 request_id=request_id,
                 question=q,
                 status="success",
-                rendered=rendered,
+                rendered=final_rendered,
                 mive_result=mive_dict,
                 ive_reports=[report.to_contract_dict()],
-                metrics=metrics.to_dict(),
+                metrics=final_metrics_dict,
             )
 
         except Exception as original_exc:
@@ -781,3 +859,79 @@ class Core:
             ),
             usage_is_estimated=u.usage_is_estimated,
         )
+
+    # ----------------------------------------------------------------- #
+    # Gate 4: VOE composition helpers
+    # ----------------------------------------------------------------- #
+    def _build_composer_input(self, question: str, report: IVEReport) -> ComposerInput:
+        """Project one closed IVEReport into the composer's narrow input
+        contract. Reads only fields `ComposerInput`/`ComposerClaimView`
+        already accept — no evidence content, no `ModelContextAssembly`, no
+        `GovernedEvidenceSet`, no retrieval result, no session state, no
+        governance object — and never mutates `report` itself. Called only
+        when `self._composer is not None`, which is only ever true together
+        with `self._voe_runtime_profile is not None` (both are set, or
+        neither is, at composition-root time).
+        """
+        claims = tuple(
+            ComposerClaimView(statement=c.statement, confidence=c.confidence)
+            for c in report.claims
+        )
+        return ComposerInput(
+            question=question,
+            report_abstract=report.abstract,
+            report_highlights=tuple(report.highlights),
+            report_claims=claims,
+            report_uncertainty=tuple(report.uncertainty),
+            report_confidence=report.confidence,
+            voe_profile=self._voe_runtime_profile,
+        )
+
+    def _composition_fallback_metrics(self, status: str) -> dict:
+        """Truthful disclosure of a failed composition attempt: no usage,
+        cost, or latency fact the runtime did not actually observe is ever
+        fabricated. Each stays `None`/`False`, exactly as a stage that did
+        not complete produces no fact for that field elsewhere in this
+        module (see `_materialize_failed_turn_record`'s own discipline)."""
+        binding = self._voe_runtime_profile.binding
+        return {
+            "status": status,
+            "provider": None,
+            "model": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            "usage_is_estimated": False,
+            "latency_ms": None,
+            "estimated_cost": None,
+            "voe_profile_id": binding.profile_id,
+            "voe_profile_version": binding.profile_version,
+            "voe_runtime_behavioral_fingerprint_sha256": (
+                binding.runtime_behavioral_fingerprint_sha256
+            ),
+        }
+
+    def _composition_success_metrics(self, result: ResponseComposerResult) -> dict:
+        """Truthful disclosure of a completed composition: every usage fact
+        is carried verbatim from what the composer itself already preserved
+        (never recomputed here). `estimated_cost` is computed through the
+        existing `PricingPort`, exactly mirroring how `_provider_metrics`
+        already prices the IVE side — no pricing logic is duplicated inside
+        `response_composer`."""
+        binding = self._voe_runtime_profile.binding
+        return {
+            "status": "COMPOSED",
+            "provider": result.provider,
+            "model": result.requested_model,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "usage_is_estimated": result.usage_is_estimated,
+            "latency_ms": round(result.latency_ms, 3),
+            "estimated_cost": self._pricing.estimate_cost(
+                result.requested_model, result.input_tokens, result.output_tokens
+            ),
+            "voe_profile_id": binding.profile_id,
+            "voe_profile_version": binding.profile_version,
+            "voe_runtime_behavioral_fingerprint_sha256": (
+                binding.runtime_behavioral_fingerprint_sha256
+            ),
+        }

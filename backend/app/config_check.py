@@ -20,6 +20,7 @@ import re
 from .core.config import Settings, secret_presence
 from .core.errors import ConfigurationError
 from .modules.execution_profile import ExecutionProfile
+from .modules.voe_profile import VOEProfileLoadError, resolve_voe_profile
 
 # header-safe: no control chars / whitespace that would corrupt an auth header
 _HEADER_SAFE = re.compile(r"^[\x21-\x7E]+$")
@@ -45,12 +46,26 @@ def require_ready(
     execution_profile: ExecutionProfile,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Require exactly the provider configuration `execution_profile` names.
+    """Require exactly the provider configuration `execution_profile` names,
+    and — independently — a valid VOE Dialogue Profile bundle whenever
+    `VOE_PROFILE_ENABLED=true` (Gate 4).
 
     An engine id the profile names that this module does not recognize is a
     composition error, not a missing-credential one, and fails closed
     immediately — no engine's configuration is silently skipped because it
     was unrecognized.
+
+    The VOE check is a genuine second gate, deliberately independent of
+    whatever `app.container.build_voe_composer` already resolved at
+    composition-root time (which degrades to "no composer" on a bad bundle
+    rather than raising, mirroring how this module's own engine checks are
+    independent of `_build_engines`): re-resolving here, per call, is what
+    turns "the loader is fail-closed when invoked" into "a bad or missing
+    bundle prevents request execution" — exactly the same shape this
+    function already gives provider credentials, applied to the VOE bundle
+    instead. `VOE_PROFILE_ENABLED=false` (the default) skips this check
+    entirely, so this function's behavior for every existing caller with the
+    profile disabled is unchanged.
     """
     e = env if env is not None else os.environ
     missing: list[str] = []
@@ -80,3 +95,13 @@ def require_ready(
             raise ConfigurationError(
                 f"{key_name} contains characters that are not header-safe."
             )
+
+    if settings.voe_profile_enabled:
+        try:
+            resolve_voe_profile(
+                enabled=True, bundle_dir=settings.voe_profile_bundle_dir
+            )
+        except VOEProfileLoadError as exc:
+            raise ConfigurationError(
+                f"VOE profile is enabled but failed to load: {exc}"
+            ) from exc
