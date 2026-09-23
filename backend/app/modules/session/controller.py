@@ -297,8 +297,17 @@ class SessionController:
             # renderer, and no persistence. It returns a decision; it does not
             # act on one. Everything the CLARIFY branch below does is done by
             # this Controller, not by the engine.
+            #
+            # DialogueTurnInput verifies STRIP normalization but never applies
+            # it (frozen contract) — Core.ask() is the system's normalizer,
+            # but it runs AFTER this seam, so this Controller must apply the
+            # same `.strip()` convention itself before this point. The one
+            # normalized value is then reused for Core.ask() below so the
+            # question the engine evaluated and the question Core executes
+            # can never diverge.
+            normalized_question = (question or "").strip()
             decision = self._dialogue_engine.evaluate(
-                DialogueTurnInput(question=question)
+                DialogueTurnInput(question=normalized_question)
             )
 
             if decision.decision_type is DialogueDecisionType.CLARIFY:
@@ -330,8 +339,11 @@ class SessionController:
                 # Exactly one Core.ask() call. The capture callback only
                 # ever appends the exact object Core hands it: it does not
                 # modify the TurnRecord and submits nothing back into Core.
+                # Reuses the SAME normalized_question the dialogue engine
+                # just evaluated (see above) rather than the raw external
+                # `question`, so the two can never diverge.
                 result = self._core.ask(
-                    question, top_k, on_turn_record=captured.append,
+                    normalized_question, top_k, on_turn_record=captured.append,
                 )
             except Exception:
                 # Best-effort preservation only. OD22-11's guarantee — an

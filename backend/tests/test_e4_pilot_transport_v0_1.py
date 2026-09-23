@@ -209,3 +209,127 @@ def test_e4c_t18_pilot_turn_route_never_calls_core_ask_directly():
         node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
     }
     assert "run_turn" in referenced_attributes
+
+
+# --------------------------------------------------------------------- #
+# E4C-T19..T24 — A2-006: SessionController.run_turn() must normalize the
+# question (STRIP) once, before the Adaptive Dialogue seam, and reuse that
+# SAME normalized value for Core.ask() — closing the gap where a raw,
+# whitespace-padded question reached `DialogueTurnInput` before Core's own
+# `.strip()` ever ran (see A2-INPUT-NORMALIZATION-BOUNDARY-20260923). Prior
+# to the fix, T19/T20/T21/T22/T23 below each raised an unhandled
+# `DialogueInputError` instead of the assertions they make now.
+# --------------------------------------------------------------------- #
+def test_e4c_t19_leading_whitespace_proceed_reaches_core_normalized(monkeypatch):
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": "  What is money?", "top_k": 3},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "answer"
+    # T24 (leading case): Core receives the STRIPPED form, not the raw one.
+    assert spy_core.calls == [{"question": "What is money?", "top_k": 3}]
+
+
+def test_e4c_t20_trailing_whitespace_proceed_reaches_core_normalized(monkeypatch):
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": "What is money?  ", "top_k": 3},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "answer"
+    # T24 (trailing case): Core receives the STRIPPED form, not the raw one.
+    assert spy_core.calls == [{"question": "What is money?", "top_k": 3}]
+
+
+def test_e4c_t21_padded_proceed_turn_completes_and_advances_history(monkeypatch):
+    from app.modules.turn_record import TurnClosureState
+
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": "  What is money?  ", "top_k": 3},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["kind"] == "answer"
+    assert spy_core.calls == [{"question": "What is money?", "top_k": 3}]
+
+    snapshot = controller.get_session(session_id)
+    assert len(snapshot.ordered_turns) == 1
+    entry = snapshot.ordered_turns[0]
+    assert entry.turn_record.closure_state is TurnClosureState.COMPLETED
+
+
+def test_e4c_t22_padded_clarify_turn_still_clarifies_and_never_reaches_core(monkeypatch):
+    from app.modules.session import SessionStatus
+
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": f"  {CLARIFY_Q}  ", "top_k": 3},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["kind"] == "clarify"
+    assert spy_core.calls == []  # zero Core.ask, same as the unpadded T08..T14 case
+
+    snapshot = controller.get_session(session_id)
+    assert snapshot.ordered_turns == ()
+    assert snapshot.next_turn_ordinal == 1
+    assert snapshot.active_turn is None
+    assert snapshot.status is SessionStatus.ACTIVE
+
+
+def test_e4c_t23_unicode_whitespace_padded_proceed_normalizes(monkeypatch):
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    # U+00A0 NO-BREAK SPACE and U+2003 EM SPACE: both satisfy Python's
+    # str.strip() exactly like ASCII whitespace (str.isspace() convention),
+    # so both must normalize the same way ASCII padding does above.
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": " What is money? ", "top_k": 3},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "answer"
+    assert spy_core.calls == [{"question": "What is money?", "top_k": 3}]
+
+
+def test_e4c_t24_whitespace_only_pilot_turn_still_rejected_at_boundary(monkeypatch):
+    client = _client()
+    controller, spy_core = _wire(monkeypatch)
+    session_id = client.post("/pilot/sessions").json()["session_id"]
+
+    resp = client.post(
+        f"/pilot/sessions/{session_id}/turn",
+        json={"question": "   ", "top_k": 3},
+    )
+
+    # Unaffected by this change: whitespace-only questions are still caught
+    # earlier by service.validate_request (400) and never reach the dialogue
+    # seam or Core.ask at all — mirrors T16's /ask behavior for the pilot route.
+    assert resp.status_code == 400
+    assert resp.json()["error_stage"] == "invalid_request"
+    assert spy_core.calls == []
