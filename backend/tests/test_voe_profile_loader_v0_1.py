@@ -8,12 +8,17 @@ into any of those, so nothing here does either.
 Two fixture strategies are used:
 
 - Tests that must reproduce the exact pinned SHA-256/fingerprint values
-  (B, D, G, H, I, K) read the REAL, immutable source preparation pack —
-  never write to it — and are skipped if that external workspace is not
-  present on the machine running this suite, so the rest of the matrix
-  still runs in an environment without it.
+  (B, D, G, H, I, K) read the REAL pinned runtime files committed with the
+  loader under `app/modules/voe_profile/assets/` (see `tests/voe_pack.py`)
+  — never write to them — so they run on any machine that has the
+  repository.
 - Tests that only need well-formed-but-wrong inputs (A, C, E, F, J) use
   synthetic `tmp_path` fixtures and do not depend on the external pack.
+
+The immutable external source preparation pack the committed files were
+taken from is used only by one optional cross-check that they are
+byte-identical to it, skipped if that external workspace is not present on
+the machine running this suite.
 """
 
 from __future__ import annotations
@@ -37,12 +42,9 @@ from app.modules.voe_profile.loader import (
     resolve_voe_profile,
 )
 from app.modules.voe_profile.models import VOEProfileBinding, VOEProfileBindingError, VOERuntimeProfile
+from tests.voe_pack import COMMITTED_VOE_PACK_DIR, EXTERNAL_SOURCE_PACK_DIR
 
-REAL_PACK_DIR = Path(
-    r"C:\Users\murenia\Documents\Projects\ION_ON\ION_PROFILE_INTEGRATION"
-    r"\VOE-DIALOGUE-PROFILE\v0.2\00_INPUT_IMMUTABLE\EXTRACTED_PACK"
-    r"\VOE_DIALOGUE_PROFILE_RUNTIME_PACK_v0.2"
-)
+REAL_PACK_DIR = COMMITTED_VOE_PACK_DIR
 
 # The source preparation pack's OWN wider identity values (from
 # 90-BUNDLE-MANIFEST.json and PROFILE_IDENTITY.txt) — pinned here as known
@@ -54,8 +56,8 @@ _WHOLE_PACK_CANONICAL_PAYLOAD_FINGERPRINT_SHA256 = (
 )
 _PACK_ZIP_SHA256 = "e7a0ab9800cbf7b494ad4a088989573f817f7068bfe0fa3726a1f9dfe79e0043"
 
-requires_real_pack = pytest.mark.skipif(
-    not REAL_PACK_DIR.is_dir(),
+requires_external_source_pack = pytest.mark.skipif(
+    not EXTERNAL_SOURCE_PACK_DIR.is_dir(),
     reason="external source preparation workspace not present on this machine",
 )
 
@@ -92,7 +94,6 @@ def test_disabled_ignores_a_none_bundle_dir_too():
 # --------------------------------------------------------------------- #
 # B: enabled + correct files -> READY / binding materialized
 # --------------------------------------------------------------------- #
-@requires_real_pack
 def test_enabled_with_real_pack_materializes_the_expected_runtime_profile():
     profile = resolve_voe_profile(enabled=True, bundle_dir=REAL_PACK_DIR)
     assert isinstance(profile, VOERuntimeProfile)
@@ -104,14 +105,12 @@ def test_enabled_with_real_pack_materializes_the_expected_runtime_profile():
     )
 
 
-@requires_real_pack
 def test_load_voe_profile_binding_is_the_runtime_profiles_own_binding():
     via_resolve = resolve_voe_profile(enabled=True, bundle_dir=REAL_PACK_DIR)
     via_binding_only = load_voe_profile_binding(REAL_PACK_DIR)
     assert via_resolve.binding == via_binding_only
 
 
-@requires_real_pack
 def test_load_voe_runtime_profile_direct_call_matches_resolve_voe_profile():
     via_resolve = resolve_voe_profile(enabled=True, bundle_dir=REAL_PACK_DIR)
     via_load = load_voe_runtime_profile(REAL_PACK_DIR)
@@ -121,7 +120,6 @@ def test_load_voe_runtime_profile_direct_call_matches_resolve_voe_profile():
 # --------------------------------------------------------------------- #
 # C: missing runtime file -> fail closed
 # --------------------------------------------------------------------- #
-@requires_real_pack
 @pytest.mark.parametrize("missing", [f for f, _, _ in RUNTIME_BEHAVIORAL_FILES])
 def test_missing_runtime_file_fails_closed(tmp_path, missing):
     _seed_bundle(tmp_path, omit=missing)
@@ -137,7 +135,6 @@ def test_enabled_with_wholly_empty_directory_fails_closed(tmp_path):
 # --------------------------------------------------------------------- #
 # D: one-byte mutation in each behavioral file -> fail closed
 # --------------------------------------------------------------------- #
-@requires_real_pack
 @pytest.mark.parametrize("target", [f for f, _, _ in RUNTIME_BEHAVIORAL_FILES])
 def test_one_byte_mutation_fails_closed(tmp_path, target):
     original = (REAL_PACK_DIR / target).read_bytes()
@@ -153,7 +150,6 @@ def test_one_byte_mutation_fails_closed(tmp_path, target):
         load_voe_profile_binding(tmp_path)
 
 
-@requires_real_pack
 def test_truncated_file_fails_closed_on_byte_count(tmp_path):
     original = (REAL_PACK_DIR / "01-VOE-DIALOGUE-PROFILE-v0.2.md").read_bytes()
     _seed_bundle(
@@ -198,7 +194,6 @@ def test_malformed_identity_source_json_fails_closed():
         loader_module._verify_embedded_identity(b"{not json")
 
 
-@requires_real_pack
 def test_real_style_parameters_file_passes_identity_verification():
     content = (REAL_PACK_DIR / "02-VOE-STYLE-PARAMETERS-v0.1.json").read_bytes()
     loader_module._verify_embedded_identity(content)  # must not raise
@@ -207,7 +202,6 @@ def test_real_style_parameters_file_passes_identity_verification():
 # --------------------------------------------------------------------- #
 # G: wrong runtime behavioral fingerprint -> fail closed
 # --------------------------------------------------------------------- #
-@requires_real_pack
 def test_wrong_pinned_fingerprint_fails_closed(tmp_path, monkeypatch):
     _seed_bundle(tmp_path)
     monkeypatch.setattr(
@@ -227,7 +221,6 @@ def test_expected_fingerprint_is_not_the_whole_pack_fingerprint():
     )
 
 
-@requires_real_pack
 def test_whole_pack_fingerprint_is_rejected_if_misconfigured(tmp_path, monkeypatch):
     _seed_bundle(tmp_path)
     monkeypatch.setattr(
@@ -246,7 +239,6 @@ def test_expected_fingerprint_is_not_the_pack_zip_hash():
     assert EXPECTED_RUNTIME_BEHAVIORAL_FINGERPRINT_SHA256 != _PACK_ZIP_SHA256
 
 
-@requires_real_pack
 def test_pack_zip_hash_is_rejected_if_misconfigured(tmp_path, monkeypatch):
     _seed_bundle(tmp_path)
     monkeypatch.setattr(
@@ -259,7 +251,6 @@ def test_pack_zip_hash_is_rejected_if_misconfigured(tmp_path, monkeypatch):
 # --------------------------------------------------------------------- #
 # J: excluded files are not runtime-loaded
 # --------------------------------------------------------------------- #
-@requires_real_pack
 def test_extra_excluded_named_files_present_do_not_affect_the_result(tmp_path):
     _seed_bundle(tmp_path)
     # Sibling files this loader must never open, even though they exist
@@ -404,7 +395,6 @@ def test_voe_runtime_profile_rejects_empty_text_field():
         )
 
 
-@requires_real_pack
 def test_real_pack_load_returns_all_four_nonempty_behavioral_texts():
     profile = load_voe_runtime_profile(REAL_PACK_DIR)
     assert profile.dialogue_profile_text.strip() != ""
@@ -417,7 +407,6 @@ def test_real_pack_load_returns_all_four_nonempty_behavioral_texts():
     assert profile.style_parameters_text.lstrip().startswith("{")
 
 
-@requires_real_pack
 @pytest.mark.parametrize(
     "filename,field_name",
     [
@@ -438,7 +427,6 @@ def test_runtime_text_is_byte_for_byte_the_verified_source_bytes(filename, field
     assert runtime_text.encode("utf-8") == source_bytes
 
 
-@requires_real_pack
 def test_no_second_filesystem_read_after_verification(tmp_path, monkeypatch):
     """Instrumented read boundary: patches `pathlib.Path.read_bytes` to
     count and record every call for the duration of one successful load.
@@ -481,3 +469,19 @@ def test_utf8_decode_failure_fails_closed(monkeypatch):
     monkeypatch.setattr(loader_module, "_read_and_check_file", fake_read_and_check_file)
     with pytest.raises(VOEProfileLoadError, match="not valid UTF-8"):
         load_voe_runtime_profile("irrelevant-path-not-touched")
+
+
+# --------------------------------------------------------------------- #
+# Optional cross-check: committed assets == external source pack
+# --------------------------------------------------------------------- #
+@requires_external_source_pack
+@pytest.mark.parametrize("filename", [f for f, _, _ in RUNTIME_BEHAVIORAL_FILES])
+def test_committed_asset_is_byte_identical_to_the_external_source_pack(filename):
+    """The committed runtime file every test above reads must be byte for
+    byte the file in the immutable source preparation pack it was taken
+    from. Reads both sides, writes neither. This is the only test in the
+    suite that depends on the external pack, and it skips where that pack
+    is absent."""
+    committed = (COMMITTED_VOE_PACK_DIR / filename).read_bytes()
+    external = (EXTERNAL_SOURCE_PACK_DIR / filename).read_bytes()
+    assert committed == external

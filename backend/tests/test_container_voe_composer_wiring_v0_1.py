@@ -13,26 +13,14 @@ introspected, never `.generate()`-invoked.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from app.container import _build_engines, build_voe_composer
 from app.core.config import Settings
 from app.modules.execution_profile import STANDARD_GEMINI
 from app.modules.response_composer import VOEResponseComposer
 from app.modules.voe_profile import VOERuntimeProfile
+from tests.voe_pack import COMMITTED_VOE_PACK_DIR
 
-REAL_VOE_PACK_DIR = Path(
-    r"C:\Users\murenia\Documents\Projects\ION_ON\ION_PROFILE_INTEGRATION"
-    r"\VOE-DIALOGUE-PROFILE\v0.2\00_INPUT_IMMUTABLE\EXTRACTED_PACK"
-    r"\VOE_DIALOGUE_PROFILE_RUNTIME_PACK_v0.2"
-)
-
-requires_real_voe_pack = pytest.mark.skipif(
-    not REAL_VOE_PACK_DIR.is_dir(),
-    reason="external VOE source preparation workspace not present on this machine",
-)
+REAL_VOE_PACK_DIR = COMMITTED_VOE_PACK_DIR
 
 
 def _settings(**overrides):
@@ -73,14 +61,12 @@ def test_enabled_but_invalid_bundle_degrades_to_none_none_never_raises():
 # --------------------------------------------------------------------- #
 # 9: enabled + valid -> composer constructed from a separate raw backend
 # --------------------------------------------------------------------- #
-@requires_real_voe_pack
 def test_enabled_with_valid_bundle_constructs_composer_and_profile():
     composer, profile = build_voe_composer(STANDARD_GEMINI, _enabled_settings())
     assert isinstance(composer, VOEResponseComposer)
     assert isinstance(profile, VOERuntimeProfile)
 
 
-@requires_real_voe_pack
 def test_composer_profile_matches_the_verified_runtime_profile():
     _, profile = build_voe_composer(STANDARD_GEMINI, _enabled_settings())
     assert profile.binding.profile_id == "VOE-DIALOGUE-PROFILE"
@@ -94,7 +80,6 @@ def test_composer_profile_matches_the_verified_runtime_profile():
 # --------------------------------------------------------------------- #
 # 10: composer provider/model equals the active SINGLE IVE provider/model
 # --------------------------------------------------------------------- #
-@requires_real_voe_pack
 def test_composer_provider_and_model_match_the_active_ive_engine():
     settings = _enabled_settings()
     composer, _ = build_voe_composer(STANDARD_GEMINI, settings)
@@ -103,7 +88,6 @@ def test_composer_provider_and_model_match_the_active_ive_engine():
     assert composer._requested_model == settings.gemini_model
 
 
-@requires_real_voe_pack
 def test_composer_backend_is_the_correct_provider_class():
     composer, _ = build_voe_composer(STANDARD_GEMINI, _enabled_settings())
     assert type(composer._backend).__name__ == "GeminiBackend"
@@ -112,7 +96,6 @@ def test_composer_backend_is_the_correct_provider_class():
 # --------------------------------------------------------------------- #
 # 11: no private IVE adapter backend is reused
 # --------------------------------------------------------------------- #
-@requires_real_voe_pack
 def test_composer_backend_is_not_shared_with_the_ive_engines_backend():
     settings = _enabled_settings()
     engines = _build_engines(STANDARD_GEMINI, settings)
@@ -125,7 +108,6 @@ def test_composer_backend_is_not_shared_with_the_ive_engines_backend():
     assert type(composer_backend) is type(ive_backend)  # same class, independent instance
 
 
-@requires_real_voe_pack
 def test_two_calls_construct_two_independent_composer_backends():
     """Each build_voe_composer call constructs its own fresh backend — no
     hidden module-level caching/sharing across calls."""

@@ -11,22 +11,15 @@ execution" via the SAME readiness gate, not a parallel one.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from app.config_check import require_ready
 from app.core.config import Settings
 from app.core.errors import ConfigurationError
 from app.modules.execution_profile import ExecutionMode, ExecutionProfile, STANDARD_GEMINI
 from app.modules.voe_profile.loader import RUNTIME_BEHAVIORAL_FILES
 from tests.util import raises
+from tests.voe_pack import COMMITTED_VOE_PACK_DIR
 
-REAL_VOE_PACK_DIR = Path(
-    r"C:\Users\murenia\Documents\Projects\ION_ON\ION_PROFILE_INTEGRATION"
-    r"\VOE-DIALOGUE-PROFILE\v0.2\00_INPUT_IMMUTABLE\EXTRACTED_PACK"
-    r"\VOE_DIALOGUE_PROFILE_RUNTIME_PACK_v0.2"
-)
+REAL_VOE_PACK_DIR = COMMITTED_VOE_PACK_DIR
 
 
 def _settings(**overrides):
@@ -108,12 +101,6 @@ def test_rejects_non_header_safe_key():
 # Gate 4: VOE profile readiness — independent of, and additive to, the
 # engine-credential checks above.
 # --------------------------------------------------------------------- #
-requires_real_voe_pack = pytest.mark.skipif(
-    not REAL_VOE_PACK_DIR.is_dir(),
-    reason="external VOE source preparation workspace not present on this machine",
-)
-
-
 def _ready_env():
     return {"GEMINI_API_KEY": "gk-abc123", "OPENAI_API_KEY": "sk-abc123"}
 
@@ -129,7 +116,6 @@ def test_voe_disabled_skips_the_voe_check_entirely():
     require_ready(settings, STANDARD_GEMINI, env={"GEMINI_API_KEY": "gk-abc123"})  # must not raise
 
 
-@requires_real_voe_pack
 def test_voe_enabled_with_valid_bundle_succeeds():
     settings = Settings.load({
         "GEMINI_MODEL": "gemini-3.1-flash-lite",
@@ -150,7 +136,6 @@ def test_voe_enabled_with_missing_bundle_dir_fails_closed():
         require_ready(settings, STANDARD_GEMINI, env=_ready_env())
 
 
-@requires_real_voe_pack
 def test_voe_enabled_with_hash_mismatch_fails_closed(tmp_path):
     for filename, _, _ in RUNTIME_BEHAVIORAL_FILES:
         (tmp_path / filename).write_bytes((REAL_VOE_PACK_DIR / filename).read_bytes())
