@@ -135,7 +135,7 @@ EXPECTED_SOURCE_SHA256 = "4ae11758719dc8cada9cdbedb07011c3347cd805c59079edf0e860
 TURN_1_QUESTION = "Where should operator-approved source documents be placed?"
 TURN_2_QUESTION = "What must not be included in the corpus source document location?"
 
-_EXPECTED_CORE_ASK_PARAMS = {"self", "question", "top_k", "progress", "on_turn_record"}
+_EXPECTED_CORE_ASK_PARAMS = {"self", "question", "top_k", "progress", "on_turn_record", "response_depth"}
 
 # Module NAMES (never arbitrary substrings of unrelated identifiers) this
 # harness must never see imported, checked structurally at runtime.

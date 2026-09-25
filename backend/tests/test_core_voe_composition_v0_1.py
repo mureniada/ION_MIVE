@@ -18,11 +18,13 @@ self-contained.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from types import SimpleNamespace
 
 import pytest
 
 import app.core.orchestrator as orch
+from app.core import errors
 from app.core.models import AskResult
 from app.modules.core_adapter import CoreAdapter
 from app.modules.execution_profile import STANDARD_GEMINI
@@ -33,6 +35,7 @@ from app.modules.response_composer import (
     ResponseComposerOutputError,
     ResponseComposerProviderError,
     ResponseComposerResult,
+    VOEResponseComposer,
 )
 from app.modules.turn_record import TurnClosureState, TurnRecord
 from app.modules.voe_profile import VOEProfileBinding, VOERuntimeProfile
@@ -570,3 +573,278 @@ def test_orchestrator_source_still_imports_nothing_from_response_evidence():
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert not any("response_evidence" in m for m in imported_modules)
+
+
+# --------------------------------------------------------------------- #
+# A2-009A: response_depth — presentation-only carrier, Core.ask() -> ComposerInput
+# --------------------------------------------------------------------- #
+_VALID_RESPONSE_DEPTHS = ("BRIEF", "STANDARD", "DEEP")
+_INVALID_RESPONSE_DEPTHS = (
+    "SHORT", "NONE", "brief", "Brief", "Standard", "deep", "", " ", "BRIEF ", " DEEP",
+    0, 1, True, False, 1.0, b"BRIEF", ["BRIEF"], ("BRIEF",), {"depth": "BRIEF"}, object(),
+)
+
+
+class _CountingRetrieval(_Retrieval):
+    def __init__(self, candidate_ids):
+        super().__init__(candidate_ids)
+        self.calls = []
+
+    def retrieve(self, question, top_k):
+        self.calls.append((question, top_k))
+        return super().retrieve(question, top_k)
+
+
+class _CountingEngine(_Engine):
+    def __init__(self, engine_id, provider, model):
+        super().__init__(engine_id, provider, model)
+        self.inputs = []
+
+    def run(self, pack):
+        self.inputs.append(pack)
+        return super().run(pack)
+
+
+class _RecordingBackend:
+    """Provider-backend stand-in under a REAL VOEResponseComposer: records
+    the exact (system, user, schema) the composer would send."""
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, *, system, user, schema):
+        self.calls.append((system, user, schema))
+        return SimpleNamespace(
+            text='{"composed_text": "COMPOSED ANSWER"}',
+            input_tokens=7, output_tokens=3, usage_is_estimated=False,
+        )
+
+
+def _spy_on(monkeypatch, name):
+    real = getattr(orch, name)
+    results = []
+
+    def spy(*args, **kwargs):
+        result = real(*args, **kwargs)
+        results.append(result)
+        return result
+
+    monkeypatch.setattr(orch, name, spy)
+    return results
+
+
+def _observe(monkeypatch, *, composer=None, voe_runtime_profile=None, **ask_kwargs):
+    """Run ONE turn on a fresh, counted Core and snapshot what it produced.
+    Only the request id is pinned, so two observations are directly
+    comparable; an `IonError` is captured, anything else propagates."""
+    _patch_gate(monkeypatch)
+    monkeypatch.setattr(orch, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex="A2009A-TURN")))
+    governed = _spy_on(monkeypatch, "materialize_governed_evidence_set")
+    contexts = _spy_on(monkeypatch, "build_model_context")
+
+    core = _core(composer=composer, voe_runtime_profile=voe_runtime_profile)
+    core._retrieval = _CountingRetrieval(("EV-1",))
+    engine = _CountingEngine("gemini", "gemini", GEMINI_MODEL)
+    core._model_gateway = ModelGateway({"gemini": engine})
+
+    events, records = [], []
+    result, error = None, None
+    try:
+        result = core.ask(
+            "what is money?", top_k=1,
+            progress=lambda stage, status: events.append((stage, status)),
+            on_turn_record=records.append,
+            **ask_kwargs,
+        )
+    except errors.IonError as exc:
+        error = exc
+    return SimpleNamespace(
+        core=core, result=result, error=error, events=tuple(events), records=tuple(records),
+        retrieval_calls=tuple(core._retrieval.calls), engine_inputs=tuple(engine.inputs),
+        governed=tuple(governed), contexts=tuple(contexts), pricing_calls=tuple(core._pricing.calls),
+    )
+
+
+def _assert_rejected_before_any_execution(observed):
+    assert isinstance(observed.error, errors.IonError)
+    assert observed.error.stage == errors.STAGE_CONFIGURATION
+    assert observed.result is None
+    assert observed.retrieval_calls == ()  # rejected before retrieval
+    assert observed.events == ()  # no stage ever started
+    assert observed.governed == ()
+    assert observed.contexts == ()
+    assert observed.engine_inputs == ()  # zero primary provider calls
+    assert observed.pricing_calls == ()
+    # the existing failed-turn closure still runs, exactly once
+    assert len(observed.records) == 1
+    record = observed.records[0]
+    assert record.closure_state is TurnClosureState.FAILED
+    assert record.failure.error_type == "IonError"
+    assert record.failure.error_stage == errors.STAGE_CONFIGURATION
+    assert record.governed_evidence is None
+    assert record.context_pack_id is None
+    assert record.model_executions == ()
+
+
+def test_core_ask_signature_gains_only_keyword_only_response_depth():
+    params = inspect.signature(orch.Core.ask).parameters
+    assert list(params) == ["self", "question", "top_k", "progress", "on_turn_record", "response_depth"]
+    shape = {name: (p.kind, p.default) for name, p in params.items() if name != "self"}
+    assert shape == {
+        "question": (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.empty),
+        "top_k": (inspect.Parameter.POSITIONAL_OR_KEYWORD, None),
+        "progress": (inspect.Parameter.KEYWORD_ONLY, None),
+        "on_turn_record": (inspect.Parameter.KEYWORD_ONLY, None),
+        "response_depth": (inspect.Parameter.KEYWORD_ONLY, None),
+    }
+
+
+def test_existing_callers_without_response_depth_remain_valid(monkeypatch):
+    _patch_gate(monkeypatch)
+    positional = _core().ask("what is money?", 1)
+    keyword = _core().ask(
+        "what is money?", top_k=1, progress=lambda *_: None, on_turn_record=lambda _: None,
+    )
+    default_top_k = _core().ask("what is money?")
+    for result in (positional, keyword, default_top_k):
+        assert result.status == "success"
+        assert result.rendered["primary_answer"] == _report().abstract
+
+    composer = _RecordingComposer()
+    _core(composer=composer, voe_runtime_profile=_voe_profile()).ask("what is money?", top_k=1)
+    assert composer.calls[0].response_depth is None
+
+
+def test_response_depth_cannot_be_passed_positionally(monkeypatch):
+    _patch_gate(monkeypatch)
+    with pytest.raises(TypeError):
+        _core().ask("what is money?", 1, "BRIEF")
+
+
+def test_explicit_none_preserves_existing_behavior_when_composer_disabled(monkeypatch):
+    omitted = _observe(monkeypatch)
+    explicit = _observe(monkeypatch, response_depth=None)
+    assert omitted.error is None and explicit.error is None
+    assert explicit.result == omitted.result
+    assert explicit.records == omitted.records
+    assert explicit.events == omitted.events
+
+
+def test_explicit_none_reaches_composer_input_as_none(monkeypatch):
+    profile = _voe_profile()
+    omitted_composer, explicit_composer = _RecordingComposer(), _RecordingComposer()
+    omitted = _observe(monkeypatch, composer=omitted_composer, voe_runtime_profile=profile)
+    explicit = _observe(
+        monkeypatch, composer=explicit_composer, voe_runtime_profile=profile, response_depth=None,
+    )
+    assert explicit.error is None
+    assert explicit_composer.calls[0].response_depth is None
+    assert explicit_composer.calls == omitted_composer.calls
+    assert explicit.result == omitted.result
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_each_valid_response_depth_reaches_composer_input_unchanged(monkeypatch, depth):
+    profile = _voe_profile()
+    baseline_composer, depth_composer = _RecordingComposer(), _RecordingComposer()
+    _observe(monkeypatch, composer=baseline_composer, voe_runtime_profile=profile)
+    observed = _observe(
+        monkeypatch, composer=depth_composer, voe_runtime_profile=profile, response_depth=depth,
+    )
+    assert observed.error is None
+    assert len(depth_composer.calls) == 1
+    composer_input = depth_composer.calls[0]
+    assert composer_input.response_depth == depth
+    # the depth is the ONLY difference in what the composer receives
+    assert dataclasses.replace(composer_input, response_depth=None) == baseline_composer.calls[0]
+
+
+@pytest.mark.parametrize("value", _INVALID_RESPONSE_DEPTHS)
+def test_invalid_response_depth_is_rejected_before_retrieval_with_composer_enabled(monkeypatch, value):
+    composer = _RecordingComposer()
+    observed = _observe(
+        monkeypatch, composer=composer, voe_runtime_profile=_voe_profile(), response_depth=value,
+    )
+    _assert_rejected_before_any_execution(observed)
+    assert composer.calls == []  # zero composer calls
+
+
+@pytest.mark.parametrize("value", _INVALID_RESPONSE_DEPTHS)
+def test_invalid_response_depth_is_rejected_when_composer_disabled(monkeypatch, value):
+    observed = _observe(monkeypatch, composer=None, voe_runtime_profile=None, response_depth=value)
+    _assert_rejected_before_any_execution(observed)
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_valid_response_depth_with_composer_disabled_preserves_base_behavior(monkeypatch, depth):
+    baseline = _observe(monkeypatch)
+    observed = _observe(monkeypatch, response_depth=depth)
+    assert observed.error is None
+    assert observed.result == baseline.result
+    assert observed.result.rendered["primary_answer"] == _report().abstract
+    assert "composition" not in observed.result.metrics
+    assert len(observed.engine_inputs) == 1  # no additional execution
+    assert observed.retrieval_calls == baseline.retrieval_calls == (("what is money?", 1),)
+    assert observed.events == baseline.events
+    assert observed.records == baseline.records
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_valid_response_depth_adds_no_provider_execution(monkeypatch, depth):
+    composer = _RecordingComposer()
+    observed = _observe(
+        monkeypatch, composer=composer, voe_runtime_profile=_voe_profile(), response_depth=depth,
+    )
+    assert observed.error is None
+    assert len(observed.engine_inputs) == 1  # one primary governed execution
+    assert len(composer.calls) == 1  # at most the one existing composer execution
+    assert len(observed.records[0].model_executions) == 1
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_valid_response_depth_leaves_governed_turn_semantics_unchanged(monkeypatch, depth):
+    """Governed evidence, the model context the engine received, the
+    ExecutionProfile binding and the TurnRecord are identical with and
+    without a depth — response_depth reaches none of them."""
+    profile = _voe_profile()
+    baseline = _observe(monkeypatch, composer=_RecordingComposer(), voe_runtime_profile=profile)
+    observed = _observe(
+        monkeypatch, composer=_RecordingComposer(), voe_runtime_profile=profile, response_depth=depth,
+    )
+    assert observed.error is None
+    assert observed.retrieval_calls == baseline.retrieval_calls
+    assert len(observed.governed) == 1 and observed.governed == baseline.governed
+    assert len(observed.contexts) == 1 and observed.contexts == baseline.contexts
+    assert observed.engine_inputs == baseline.engine_inputs
+    assert observed.engine_inputs[0] is observed.contexts[0]
+    assert observed.records == baseline.records
+    assert observed.records[0].execution_profile == baseline.records[0].execution_profile
+    assert observed.core.execution_profile is STANDARD_GEMINI
+    assert observed.result == baseline.result
+    assert "response_depth" not in {f.name for f in dataclasses.fields(TurnRecord)}
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_composer_instruction_and_payload_are_unchanged_by_response_depth(monkeypatch, depth):
+    """Driven through a REAL VOEResponseComposer: the system instruction,
+    user payload and schema its backend receives are byte-identical with
+    and without a depth — A2-009A carries the value; nothing reads it."""
+    profile = _voe_profile()
+    baseline_backend, depth_backend = _RecordingBackend(), _RecordingBackend()
+    _observe(
+        monkeypatch,
+        composer=VOEResponseComposer(baseline_backend, provider="gemini", requested_model=GEMINI_MODEL),
+        voe_runtime_profile=profile,
+    )
+    observed = _observe(
+        monkeypatch,
+        composer=VOEResponseComposer(depth_backend, provider="gemini", requested_model=GEMINI_MODEL),
+        voe_runtime_profile=profile,
+        response_depth=depth,
+    )
+    assert observed.error is None
+    assert observed.result.rendered["primary_answer"] == "COMPOSED ANSWER"
+    assert len(depth_backend.calls) == len(baseline_backend.calls) == 1
+    assert depth_backend.calls == baseline_backend.calls
+    _system, user, _schema = depth_backend.calls[0]
+    assert "response_depth" not in user

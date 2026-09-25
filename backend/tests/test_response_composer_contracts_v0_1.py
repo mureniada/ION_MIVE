@@ -150,7 +150,9 @@ def test_composer_claim_view_has_no_evidence_identity_field_at_all():
     assert field_names & forbidden == set()
 
 
-def test_composer_input_field_set_is_exactly_the_narrow_seven():
+def test_composer_input_field_set_is_exactly_the_narrow_eight():
+    """A2-009A: the Gate 2A seven fields plus exactly one optional
+    presentation-metadata field, `response_depth` — still an exact set."""
     field_names = {f.name for f in dataclasses.fields(ComposerInput)}
     assert field_names == {
         "question",
@@ -160,6 +162,7 @@ def test_composer_input_field_set_is_exactly_the_narrow_seven():
         "report_uncertainty",
         "report_confidence",
         "voe_profile",
+        "response_depth",
     }
 
 
@@ -305,4 +308,77 @@ def test_voe_profile_binding_rejects_blank_identity():
         VOEProfileBinding(
             profile_id="", profile_version="0.2",
             runtime_behavioral_fingerprint_sha256="a" * 64,
+        )
+
+
+# --------------------------------------------------------------------- #
+# A2-009A: response_depth — optional presentation-metadata carrier
+# --------------------------------------------------------------------- #
+_VALID_RESPONSE_DEPTHS = ("BRIEF", "STANDARD", "DEEP")
+
+
+def test_composer_input_existing_construction_without_response_depth_is_valid():
+    """Every pre-A2-009A construction site omits response_depth entirely."""
+    ci = _composer_input()
+    assert ci.question == "What is money?"
+    assert ci.response_depth is None
+
+
+def test_composer_input_response_depth_field_defaults_to_none():
+    field = {f.name: f for f in dataclasses.fields(ComposerInput)}["response_depth"]
+    assert field.default is None
+    assert field.type == "str | None"
+
+
+def test_composer_input_accepts_explicit_none_response_depth():
+    ci = _composer_input(response_depth=None)
+    assert ci.response_depth is None
+    assert ci == _composer_input()
+
+
+@pytest.mark.parametrize("depth", _VALID_RESPONSE_DEPTHS)
+def test_composer_input_accepts_each_valid_response_depth_unchanged(depth):
+    ci = _composer_input(response_depth=depth)
+    assert ci.response_depth == depth
+    assert type(ci.response_depth) is str
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # invalid strings
+        "SHORT", "MEDIUM", "LONG", "VERBOSE", "NONE", "None", "BRIEFER", "DEEPER",
+        # incorrect casing — never uppercased or normalized
+        "brief", "Brief", "standard", "Standard", "deep", "Deep", "bRIEF",
+        # empty / whitespace / padded — never stripped
+        "", " ", "BRIEF ", " DEEP", "\tSTANDARD", "STANDARD\n",
+    ],
+)
+def test_composer_input_rejects_invalid_response_depth_strings(value):
+    with pytest.raises(ComposerContractError):
+        _composer_input(response_depth=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, 1, True, False, 1.0, b"BRIEF", ["BRIEF"], ("BRIEF",), {"BRIEF"}, {"depth": "BRIEF"}, object()],
+)
+def test_composer_input_rejects_non_string_response_depth(value):
+    with pytest.raises(ComposerContractError):
+        _composer_input(response_depth=value)
+
+
+def test_composer_input_response_depth_is_frozen():
+    ci = _composer_input(response_depth="BRIEF")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        ci.response_depth = "DEEP"
+
+
+def test_composer_input_remains_frozen_and_keyword_only():
+    params = ComposerInput.__dataclass_params__
+    assert params.frozen is True
+    assert all(f.kw_only for f in dataclasses.fields(ComposerInput))
+    with pytest.raises(TypeError):
+        ComposerInput(  # positional construction is refused
+            "What is money?", "abstract", (), (), (), 0.5, _runtime_profile(), "BRIEF",
         )

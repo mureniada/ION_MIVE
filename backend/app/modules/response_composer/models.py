@@ -68,6 +68,10 @@ from ..voe_profile import VOERuntimeProfile
 RESPONSE_COMPOSER_CONTRACT_ID = "ION_RESPONSE_COMPOSER_V0_1"
 RESPONSE_COMPOSER_VERSION = "0.1"
 
+# A2-009A: the closed set of `ComposerInput.response_depth` values besides
+# None, validated here independently of any caller.
+_RESPONSE_DEPTHS = ("BRIEF", "STANDARD", "DEEP")
+
 
 class ComposerContractError(ValueError):
     """Raised whenever a composer boundary object cannot be constructed as
@@ -142,6 +146,11 @@ class ComposerInput:
     enter, however this object is constructed. `VOERuntimeProfile` itself
     carries none of these either (see `voe_profile/models.py`), so nesting
     it here introduces no new evidence-shaped surface.
+
+    `response_depth` (A2-009A) is optional presentation metadata: `None`, or
+    exactly one of "BRIEF", "STANDARD", "DEEP" — no case folding, stripping
+    or coercion. It carries no evidence, session, provider or
+    execution-profile value, and the v0.1 composer does not read it.
     """
 
     question: str
@@ -151,6 +160,7 @@ class ComposerInput:
     report_uncertainty: tuple[str, ...]
     report_confidence: float
     voe_profile: VOERuntimeProfile
+    response_depth: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.question, str) or not self.question.strip():
@@ -177,6 +187,14 @@ class ComposerInput:
             raise ComposerContractError(
                 "voe_profile must be a VOERuntimeProfile, found "
                 f"{type(self.voe_profile).__name__}"
+            )
+        if self.response_depth is not None and not (
+            isinstance(self.response_depth, str)
+            and self.response_depth in _RESPONSE_DEPTHS
+        ):
+            raise ComposerContractError(
+                f"response_depth must be None or one of {_RESPONSE_DEPTHS!r}, "
+                f"found {self.response_depth!r}"
             )
 
 

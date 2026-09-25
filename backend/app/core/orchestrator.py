@@ -101,6 +101,13 @@ ProgressCallback = Callable[[str, str], None]
 # or any transport payload — the observer is the only way out (OD22-01).
 TurnRecordObserver = Callable[[TurnRecord], None]
 
+# A2-009A: the closed set of presentation-depth values `ask()` accepts
+# besides None. `response_depth` is presentation metadata only — validated
+# before retrieval and carried, unchanged, onto `ComposerInput`. It never
+# reaches top_k, retrieval, governance, the governed evidence set, the model
+# context, primary engine input, the ExecutionProfile, or the TurnRecord.
+_RESPONSE_DEPTHS = ("BRIEF", "STANDARD", "DEEP")
+
 
 def _turn_failure_for(exc: Exception) -> TurnFailure:
     """Bind why a turn failed, without widening what the system discloses.
@@ -213,6 +220,7 @@ class Core:
         *,
         progress: ProgressCallback | None = None,
         on_turn_record: TurnRecordObserver | None = None,
+        response_depth: str | None = None,
     ) -> AskResult:
         emit = progress or (lambda *_: None)
         capture = on_turn_record or (lambda _: None)
@@ -259,6 +267,16 @@ class Core:
             # Only now is a top_k EFFECTIVE. A value that was computed and then
             # rejected never governed anything, so it is not recorded as one.
             effective_top_k = k
+            # A2-009A: exact membership only — no case folding, no stripping,
+            # no coercion. Checked here, before retrieval and any engine call,
+            # whether or not a composer is configured.
+            if response_depth is not None and not (
+                isinstance(response_depth, str) and response_depth in _RESPONSE_DEPTHS
+            ):
+                raise errors.IonError(
+                    "response_depth must be None or one of 'BRIEF', 'STANDARD', 'DEEP'.",
+                    stage=errors.STAGE_CONFIGURATION,
+                )
 
             # --- retrieval ---
             emit("retrieval", "started")
@@ -437,7 +455,9 @@ class Core:
             final_answer = base_rendered["primary_answer"]
 
             if self._composer is not None:
-                composer_input = self._build_composer_input(q, report)
+                composer_input = self._build_composer_input(
+                    q, report, response_depth=response_depth
+                )
                 try:
                     composition_result = self._composer.compose(composer_input)
                 except ResponseComposerProviderError:
@@ -863,7 +883,13 @@ class Core:
     # ----------------------------------------------------------------- #
     # Gate 4: VOE composition helpers
     # ----------------------------------------------------------------- #
-    def _build_composer_input(self, question: str, report: IVEReport) -> ComposerInput:
+    def _build_composer_input(
+        self,
+        question: str,
+        report: IVEReport,
+        *,
+        response_depth: str | None = None,
+    ) -> ComposerInput:
         """Project one closed IVEReport into the composer's narrow input
         contract. Reads only fields `ComposerInput`/`ComposerClaimView`
         already accept — no evidence content, no `ModelContextAssembly`, no
@@ -872,6 +898,10 @@ class Core:
         when `self._composer is not None`, which is only ever true together
         with `self._voe_runtime_profile is not None` (both are set, or
         neither is, at composition-root time).
+
+        `response_depth` (A2-009A) is the value `ask()` already validated,
+        carried through unchanged: presentation metadata only, never read
+        from or derived from `report`.
         """
         claims = tuple(
             ComposerClaimView(statement=c.statement, confidence=c.confidence)
@@ -885,6 +915,7 @@ class Core:
             report_uncertainty=tuple(report.uncertainty),
             report_confidence=report.confidence,
             voe_profile=self._voe_runtime_profile,
+            response_depth=response_depth,
         )
 
     def _composition_fallback_metrics(self, status: str) -> dict:
