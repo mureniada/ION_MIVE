@@ -20,7 +20,7 @@ import re
 from .core.config import Settings, secret_presence
 from .core.errors import ConfigurationError
 from .modules.execution_profile import ExecutionProfile
-from .modules.voe_profile import VOEProfileLoadError, resolve_voe_profile
+from .modules.voe_profile import VOEProfileLoadError, VOERuntimeProfile, resolve_voe_profile
 
 # header-safe: no control chars / whitespace that would corrupt an auth header
 _HEADER_SAFE = re.compile(r"^[\x21-\x7E]+$")
@@ -45,6 +45,8 @@ def require_ready(
     settings: Settings,
     execution_profile: ExecutionProfile,
     env: dict[str, str] | None = None,
+    *,
+    core_voe_runtime_profile: VOERuntimeProfile | None = None,
 ) -> None:
     """Require exactly the provider configuration `execution_profile` names,
     and — independently — a valid VOE Dialogue Profile bundle whenever
@@ -66,6 +68,15 @@ def require_ready(
     instead. `VOE_PROFILE_ENABLED=false` (the default) skips this check
     entirely, so this function's behavior for every existing caller with the
     profile disabled is unchanged.
+
+    G5 consistency check: with VOE enabled, a valid fresh resolution is not
+    enough — the running Core (`core_voe_runtime_profile`, from
+    `Core.voe_runtime_profile`) must also hold a bound profile whose binding
+    equals the freshly resolved one. A Core cached without a profile (bundle
+    became valid only after composition) or with a different one fails
+    closed until the process restarts; the Core is never rebuilt or mutated
+    here. The argument defaults to None, so a caller that omits it fails
+    closed rather than silently skipping the check. Ignored when disabled.
     """
     e = env if env is not None else os.environ
     missing: list[str] = []
@@ -98,10 +109,21 @@ def require_ready(
 
     if settings.voe_profile_enabled:
         try:
-            resolve_voe_profile(
+            resolved = resolve_voe_profile(
                 enabled=True, bundle_dir=settings.voe_profile_bundle_dir
             )
         except VOEProfileLoadError as exc:
             raise ConfigurationError(
                 f"VOE profile is enabled but failed to load: {exc}"
             ) from exc
+        if core_voe_runtime_profile is None:
+            raise ConfigurationError(
+                "VOE profile is enabled but the running Core was composed "
+                "without it; a process restart is required."
+            )
+        if core_voe_runtime_profile.binding != resolved.binding:
+            raise ConfigurationError(
+                "VOE profile is enabled but the running Core is bound to a "
+                "different VOE profile than the one now configured; a process "
+                "restart is required."
+            )

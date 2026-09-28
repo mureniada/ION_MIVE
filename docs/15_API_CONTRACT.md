@@ -191,6 +191,11 @@ Exact implemented `error_stage` → HTTP status mapping (verified against
 | `configuration` | 500 | only reachable if a `ConfigurationError` originates inside `core.ask()` itself, rather than at the earlier `require_ready()` check (which maps to `not_ready` instead) |
 | `normalization` | 422 | |
 
+VOE runtime configuration (G4, G5):
+- A malformed `VOE_PROFILE_ENABLED` returns `503 not_ready` on `POST /ask` and the `/pilot/sessions` routes, with the fixed message `"Invalid runtime configuration (values never shown)."`. Nothing is cached, so correcting the value recovers without a restart. `GET /health` stays 200.
+- `GET /ask/stream` stays hidden (404) whenever `DEBUG` cannot be confirmed as true, including when settings fail to load.
+- With `VOE_PROFILE_ENABLED=true`, if the running Core has no bound VOE profile, or its binding differs from the currently configured bundle, readiness returns `503 not_ready` until the process restarts. The Core is never rebuilt or changed in place.
+
 A single-provider failure is an **incomplete MIVE state**, surfaced as an error with `error_stage`, not a 200 success (invariant, `docs/06`).
 
 ## Invariants for the API layer

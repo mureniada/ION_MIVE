@@ -11,11 +11,13 @@ execution" via the SAME readiness gate, not a parallel one.
 
 from __future__ import annotations
 
+import dataclasses
+
 from app.config_check import require_ready
 from app.core.config import Settings
 from app.core.errors import ConfigurationError
 from app.modules.execution_profile import ExecutionMode, ExecutionProfile, STANDARD_GEMINI
-from app.modules.voe_profile.loader import RUNTIME_BEHAVIORAL_FILES
+from app.modules.voe_profile.loader import RUNTIME_BEHAVIORAL_FILES, load_voe_runtime_profile
 from tests.util import raises
 from tests.voe_pack import COMMITTED_VOE_PACK_DIR
 
@@ -123,7 +125,10 @@ def test_voe_enabled_with_valid_bundle_succeeds():
         "VOE_PROFILE_ENABLED": "true",
         "VOE_PROFILE_BUNDLE_DIR": str(REAL_VOE_PACK_DIR),
     })
-    require_ready(settings, STANDARD_GEMINI, env=_ready_env())  # must not raise
+    require_ready(
+        settings, STANDARD_GEMINI, env=_ready_env(),
+        core_voe_runtime_profile=load_voe_runtime_profile(REAL_VOE_PACK_DIR),
+    )  # must not raise
 
 
 def test_voe_enabled_with_missing_bundle_dir_fails_closed():
@@ -166,3 +171,94 @@ def test_voe_readiness_failure_message_never_exposes_a_secret_value():
     except ConfigurationError as exc:
         for secret in _ready_env().values():
             assert secret not in exc.message
+
+
+# --------------------------------------------------------------------- #
+# G5: with VOE enabled, the running Core's bound profile must be present and
+# match the freshly resolved binding — otherwise fail closed until restart.
+# --------------------------------------------------------------------- #
+def _voe_settings(bundle_dir):
+    return Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "true",
+        "VOE_PROFILE_BUNDLE_DIR": str(bundle_dir),
+    })
+
+
+def _mismatched_profile():
+    real = load_voe_runtime_profile(REAL_VOE_PACK_DIR)
+    other_binding = dataclasses.replace(
+        real.binding, runtime_behavioral_fingerprint_sha256="0" * 64
+    )
+    return dataclasses.replace(real, binding=other_binding)
+
+
+def test_g5_voe_enabled_core_without_profile_fails_closed():
+    try:
+        require_ready(
+            _voe_settings(REAL_VOE_PACK_DIR), STANDARD_GEMINI, env=_ready_env(),
+            core_voe_runtime_profile=None,
+        )
+        assert False, "expected ConfigurationError"
+    except ConfigurationError as exc:
+        assert "composed without it" in exc.message
+        assert "restart" in exc.message
+
+
+def test_g5_voe_enabled_omitted_core_profile_fails_closed():
+    """A caller that forgets the argument gets 503, never a silent skip."""
+    with raises(ConfigurationError):
+        require_ready(_voe_settings(REAL_VOE_PACK_DIR), STANDARD_GEMINI, env=_ready_env())
+
+
+def test_g5_voe_enabled_core_bound_to_different_profile_fails_closed():
+    try:
+        require_ready(
+            _voe_settings(REAL_VOE_PACK_DIR), STANDARD_GEMINI, env=_ready_env(),
+            core_voe_runtime_profile=_mismatched_profile(),
+        )
+        assert False, "expected ConfigurationError"
+    except ConfigurationError as exc:
+        assert "different VOE profile" in exc.message
+        assert "restart" in exc.message
+
+
+def test_g5_voe_enabled_invalid_bundle_fails_even_with_valid_core_profile():
+    """The fresh resolution must itself pass; a valid cached profile is not
+    a substitute for a valid currently-configured bundle."""
+    try:
+        require_ready(
+            _voe_settings("C:/definitely/does/not/exist"), STANDARD_GEMINI,
+            env=_ready_env(),
+            core_voe_runtime_profile=load_voe_runtime_profile(REAL_VOE_PACK_DIR),
+        )
+        assert False, "expected ConfigurationError"
+    except ConfigurationError as exc:
+        assert "failed to load" in exc.message
+
+
+def test_g5_voe_disabled_ignores_core_profile_argument():
+    settings = Settings.load({
+        "GEMINI_MODEL": "gemini-3.1-flash-lite",
+        "VOE_PROFILE_ENABLED": "false",
+    })
+    env = {"GEMINI_API_KEY": "gk-abc123"}
+    require_ready(settings, STANDARD_GEMINI, env=env)  # must not raise
+    require_ready(settings, STANDARD_GEMINI, env=env, core_voe_runtime_profile=None)
+    require_ready(
+        settings, STANDARD_GEMINI, env=env,
+        core_voe_runtime_profile=_mismatched_profile(),
+    )
+
+
+def test_g5_consistency_failure_messages_never_expose_a_secret_value():
+    for core_profile in (None, _mismatched_profile()):
+        try:
+            require_ready(
+                _voe_settings(REAL_VOE_PACK_DIR), STANDARD_GEMINI, env=_ready_env(),
+                core_voe_runtime_profile=core_profile,
+            )
+            assert False, "expected ConfigurationError"
+        except ConfigurationError as exc:
+            for secret in _ready_env().values():
+                assert secret not in exc.message

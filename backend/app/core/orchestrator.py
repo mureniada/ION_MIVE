@@ -226,6 +226,17 @@ class Core:
         """
         return self._execution_profile
 
+    @property
+    def voe_runtime_profile(self) -> VOERuntimeProfile | None:
+        """The VOE runtime profile this Core was composed with, or None.
+
+        Read-only composition surface (G5), mirroring `execution_profile`:
+        the readiness gate compares it against a fresh resolution so a Core
+        cached without — or with a different — profile fails closed instead
+        of silently answering uncomposed. Never exposed on any payload.
+        """
+        return self._voe_runtime_profile
+
     def ask(
         self,
         question: str,

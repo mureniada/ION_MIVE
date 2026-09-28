@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .api import service
 from .config_check import require_ready
 from .container import build_core, build_session_controller
-from .core.config import Settings
+from .core.config import Settings, SettingsError
 from .core.errors import ConfigurationError, IonError
 from .modules.session import (
     ConcurrentTurnError,
@@ -28,6 +28,19 @@ app = FastAPI(title="ION MIVE Transport", version="0.1.0")
 
 # Built once and reused (the local embedding model loads lazily on first use).
 _STATE: dict = {}
+
+
+@app.exception_handler(SettingsError)
+async def _invalid_settings(request, exc: SettingsError):
+    # G4: a malformed governed setting (VOE_PROFILE_ENABLED) is a controlled
+    # not-ready state, not a bare 500. Raised by Settings.load() inside
+    # _get_core(), so nothing was cached and a corrected setting recovers.
+    # The message is fixed: never the malformed value, never a traceback.
+    return JSONResponse(status_code=503, content={
+        "status": "error",
+        "error_stage": "not_ready",
+        "message": "Invalid runtime configuration (values never shown).",
+    })
 
 
 def _get_core():
@@ -77,7 +90,10 @@ async def ask(payload: dict | None = None):
         # The SAME resolved profile Core itself executes under — never a
         # second, independent resolution of `settings.execution_profile_id`
         # (TASK 20 / D20-03).
-        require_ready(settings, core.execution_profile)
+        require_ready(
+            settings, core.execution_profile,
+            core_voe_runtime_profile=core.voe_runtime_profile,
+        )
     except ConfigurationError as exc:
         code, body = service.not_ready_payload(exc)
         return JSONResponse(status_code=code, content=body)
@@ -97,7 +113,13 @@ async def ask(payload: dict | None = None):
 def ask_stream(question: str, top_k: int | None = None):
     # Gate first, on a fresh config read only — before validation, readiness,
     # core construction, or any provider work (docs/15, ADR-003).
-    if not Settings.load().debug:
+    # G4: settings that fail to load mean DEBUG cannot be confirmed true, so
+    # the stream stays hidden (404) rather than surfacing as not-ready.
+    try:
+        debug = Settings.load().debug
+    except SettingsError:
+        debug = False
+    if not debug:
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
     invalid = service.validate_request(question, top_k)
@@ -106,7 +128,10 @@ def ask_stream(question: str, top_k: int | None = None):
 
     settings, core = _get_core()
     try:
-        require_ready(settings, core.execution_profile)
+        require_ready(
+            settings, core.execution_profile,
+            core_voe_runtime_profile=core.voe_runtime_profile,
+        )
     except ConfigurationError as exc:
         code, body = service.not_ready_payload(exc)
         return JSONResponse(status_code=code, content=body)
@@ -145,7 +170,10 @@ async def run_pilot_turn(session_id: str, payload: dict | None = None):
     try:
         # The SAME readiness gate /ask uses, ahead of the same governed
         # Core.ask() this turn may reach on PROCEED (D20-03).
-        require_ready(settings, core.execution_profile)
+        require_ready(
+            settings, core.execution_profile,
+            core_voe_runtime_profile=core.voe_runtime_profile,
+        )
     except ConfigurationError as exc:
         code, body = service.not_ready_payload(exc)
         return JSONResponse(status_code=code, content=body)
