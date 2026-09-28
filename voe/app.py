@@ -18,6 +18,11 @@ CLARIFY_TEXT = (
     "Could you say a bit more about what you're asking? "
     "That will help find the right evidence."
 )
+UNCERTAINTY_HEADING = "What remains uncertain"
+PRESENTATION_LABELS = {
+    "COMPOSED": "Presented in the Voice of Emergence style from the verified interpretation.",
+    "FALLBACK": "Shown in standard form.",
+}
 
 st.set_page_config(page_title="Voice of Emergence")
 
@@ -79,6 +84,13 @@ def _render_message(msg: dict) -> None:
             st.write(msg["content"])
         elif kind == "answer":
             st.write(msg["primary_answer"])
+            uncertainty = msg.get("uncertainty") or []
+            if uncertainty:
+                st.markdown(f"**{UNCERTAINTY_HEADING}**")
+                st.markdown("\n".join(f"- {item}" for item in uncertainty))
+            label = PRESENTATION_LABELS.get(msg.get("presentation_status"))
+            if label:
+                st.caption(label)
             if msg.get("disclaimer"):
                 st.caption(msg["disclaimer"])
             evidence = msg.get("evidence") or []
@@ -117,6 +129,8 @@ def _process_turn(question: str) -> None:
             "primary_answer": outcome.primary_answer,
             "disclaimer": outcome.disclaimer,
             "evidence": list(outcome.evidence),
+            "uncertainty": list(outcome.uncertainty),
+            "presentation_status": outcome.presentation_status,
         })
 
 

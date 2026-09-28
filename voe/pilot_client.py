@@ -34,6 +34,10 @@ _ALLOWED_EVIDENCE_FIELDS = (
     "claim_linkage",
 )
 
+# The exact public `presentation.composition_status` values the backend may
+# send (docs/15_API_CONTRACT.md). Anything else is treated as absent.
+_PRESENTATION_STATUSES = ("COMPOSED", "FALLBACK")
+
 
 class PilotClientError(Exception):
     """A controlled, safe-to-surface client error.
@@ -56,6 +60,11 @@ class AnswerTurn:
     primary_answer: str = ""
     disclaimer: str | None = None
     evidence: tuple[dict, ...] = field(default_factory=tuple)
+    # The backend's own `uncertainty.reported`, verbatim; () when absent.
+    uncertainty: tuple[str, ...] = ()
+    # `presentation.composition_status` ("COMPOSED" / "FALLBACK"); None when
+    # the backend did not attempt VOE composition or sent anything else.
+    presentation_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +95,22 @@ def _normalize_evidence(raw) -> tuple[dict, ...]:
             continue
         rows.append({k: item.get(k) for k in _ALLOWED_EVIDENCE_FIELDS if k in item})
     return tuple(rows)
+
+
+def _normalize_uncertainty(raw) -> tuple[str, ...]:
+    if not isinstance(raw, dict):
+        return ()
+    reported = raw.get("reported")
+    if not isinstance(reported, list):
+        return ()
+    return tuple(item for item in reported if isinstance(item, str))
+
+
+def _normalize_presentation_status(raw) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    status = raw.get("composition_status")
+    return status if isinstance(status, str) and status in _PRESENTATION_STATUSES else None
 
 
 class PilotClient:
@@ -147,6 +172,8 @@ class PilotClient:
                 primary_answer=primary_answer,
                 disclaimer=disclaimer,
                 evidence=_normalize_evidence(body.get("evidence")),
+                uncertainty=_normalize_uncertainty(body.get("uncertainty")),
+                presentation_status=_normalize_presentation_status(body.get("presentation")),
             )
 
         raise PilotClientError("unrecognized turn response")
