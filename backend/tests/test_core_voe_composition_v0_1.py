@@ -848,3 +848,207 @@ def test_composer_instruction_and_payload_are_unchanged_by_response_depth(monkey
     assert depth_backend.calls == baseline_backend.calls
     _system, user, _schema = depth_backend.calls[0]
     assert "response_depth" not in user
+
+
+# --------------------------------------------------------------------- #
+# G3: turn totals cover the composition attempt; providers and the Turn
+# Record's pipeline_latency_ms keep their meaning
+# --------------------------------------------------------------------- #
+_ATTEMPTED = {
+    "COMPOSED": lambda: _RecordingComposer(),
+    "FALLBACK_PROVIDER_ERROR": lambda: _RecordingComposer(raises=ResponseComposerProviderError("x")),
+    "FALLBACK_MALFORMED_OUTPUT": lambda: _RecordingComposer(raises=ResponseComposerOutputError("x")),
+}
+_FALLBACKS = ("FALLBACK_PROVIDER_ERROR", "FALLBACK_MALFORMED_OUTPUT")
+
+_APPROVED_COMPOSED_DISCLAIMER = (
+    "The interpretation in this response was produced by a single configured "
+    "model execution (gemini). A separate presentation step, run under the VOE "
+    "Dialogue Profile 0.2, then restyled its wording and was instructed not to "
+    "add claims or evidence. No second, independent model interpretation was "
+    "run for this turn, so no cross-model agreement, disagreement, or consensus "
+    "claim applies."
+)
+
+
+class _PricingUnknownForComposer(_Pricing):
+    """Prices the IVE usage (11/5) but not the composer's (100/42)."""
+
+    def estimate_cost(self, model, input_tokens, output_tokens):
+        self.calls.append((model, input_tokens, output_tokens))
+        if (input_tokens, output_tokens) == (100, 42):
+            return None
+        return 0.00042
+
+
+class _CapturingRenderer(_Renderer):
+    def __init__(self):
+        self.outputs = []
+
+    def render_single(self, **kwargs):
+        out = super().render_single(**kwargs)
+        self.outputs.append(out)
+        return out
+
+
+def _attempted_core(status):
+    return _core(composer=_ATTEMPTED[status](), voe_runtime_profile=_voe_profile())
+
+
+def _ask_with_record(core):
+    captured = []
+    result = core.ask("what is money?", top_k=1, on_turn_record=captured.append)
+    assert len(captured) == 1
+    return result, captured[0]
+
+
+def test_g3_disabled_totals_are_the_pre_profile_values(monkeypatch):
+    _patch_gate(monkeypatch)
+    result, record = _ask_with_record(_core(composer=None))
+    metrics = result.rendered["operational_metrics"]
+    assert metrics["total_latency_ms"] == round(record.pipeline_latency_ms, 3)
+    assert metrics["total_estimated_cost"] == 0.00042
+
+
+@pytest.mark.parametrize("status", sorted(_ATTEMPTED))
+def test_g3_total_latency_includes_the_composition_attempt(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    result, record = _ask_with_record(_attempted_core(status))
+    metrics = result.rendered["operational_metrics"]
+    attempt = metrics["composition"]["attempt_latency_ms"]
+
+    assert metrics["composition"]["status"] == status
+    assert attempt > 0
+    assert metrics["total_latency_ms"] == round(record.pipeline_latency_ms + attempt, 3)
+    assert result.metrics is metrics
+
+
+@pytest.mark.parametrize("status", sorted(_ATTEMPTED))
+def test_g3_turn_record_pipeline_latency_is_unchanged_by_composition(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    _, disabled_record = _ask_with_record(_core(composer=None))
+    _, record = _ask_with_record(_attempted_core(status))
+    assert record.pipeline_latency_ms == disabled_record.pipeline_latency_ms
+    assert len(record.model_executions) == 1
+
+
+def test_g3_success_keeps_provider_latency_and_adds_attempt_latency(monkeypatch):
+    _patch_gate(monkeypatch)
+    result = _attempted_core("COMPOSED").ask("what is money?", top_k=1)
+    composition = result.rendered["operational_metrics"]["composition"]
+    assert composition["latency_ms"] == 12.5
+    assert composition["attempt_latency_ms"] == 1.0
+
+
+@pytest.mark.parametrize("status", _FALLBACKS)
+def test_g3_fallback_records_attempt_latency_but_no_provider_latency(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    result = _attempted_core(status).ask("what is money?", top_k=1)
+    composition = result.rendered["operational_metrics"]["composition"]
+    assert composition["latency_ms"] is None
+    assert composition["attempt_latency_ms"] == 1.0
+
+
+def test_g3_total_cost_includes_a_known_composition_cost(monkeypatch):
+    _patch_gate(monkeypatch)
+    result = _attempted_core("COMPOSED").ask("what is money?", top_k=1)
+    metrics = result.rendered["operational_metrics"]
+    assert metrics["composition"]["estimated_cost"] == 0.00042
+    assert metrics["total_estimated_cost"] == round(0.00042 + 0.00042, 8)
+
+
+def test_g3_total_cost_is_none_when_composition_cost_is_unknown(monkeypatch):
+    _patch_gate(monkeypatch)
+    core = _attempted_core("COMPOSED")
+    core._pricing = _PricingUnknownForComposer()
+    metrics = core.ask("what is money?", top_k=1).rendered["operational_metrics"]
+    assert metrics["providers"][0]["estimated_cost"] == 0.00042
+    assert metrics["composition"]["estimated_cost"] is None
+    assert metrics["total_estimated_cost"] is None
+
+
+@pytest.mark.parametrize("status", _FALLBACKS)
+def test_g3_total_cost_is_none_on_fallback(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    metrics = _attempted_core(status).ask("what is money?", top_k=1).rendered["operational_metrics"]
+    assert metrics["composition"]["estimated_cost"] is None
+    assert metrics["total_estimated_cost"] is None
+
+
+@pytest.mark.parametrize("status", sorted(_ATTEMPTED))
+def test_g3_providers_remain_ive_only(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    disabled = _core(composer=None).ask("what is money?", top_k=1).rendered["operational_metrics"]
+    metrics = _attempted_core(status).ask("what is money?", top_k=1).rendered["operational_metrics"]
+    assert len(metrics["providers"]) == 1
+    assert metrics["providers"] == disabled["providers"]
+
+
+# --------------------------------------------------------------------- #
+# G7: explicit presentation field and a truthful composed-turn disclaimer
+# --------------------------------------------------------------------- #
+def test_g7_presentation_is_absent_when_composition_was_not_attempted(monkeypatch):
+    _patch_gate(monkeypatch)
+    result = _core(composer=None).ask("what is money?", top_k=1)
+    assert "presentation" not in result.rendered
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [("COMPOSED", "COMPOSED"), ("FALLBACK_PROVIDER_ERROR", "FALLBACK"), ("FALLBACK_MALFORMED_OUTPUT", "FALLBACK")],
+)
+def test_g7_presentation_discloses_only_the_composition_status(monkeypatch, status, expected):
+    _patch_gate(monkeypatch)
+    result = _attempted_core(status).ask("what is money?", top_k=1)
+    assert result.rendered["presentation"] == {"composition_status": expected}
+
+
+def test_g7_composed_disclaimer_is_the_approved_wording(monkeypatch):
+    _patch_gate(monkeypatch)
+    result = _attempted_core("COMPOSED").ask("what is money?", top_k=1)
+    assert result.rendered["disclaimer"] == _APPROVED_COMPOSED_DISCLAIMER
+
+
+def test_g7_composed_disclaimer_never_claims_a_comparison(monkeypatch):
+    _patch_gate(monkeypatch)
+    lowered = _attempted_core("COMPOSED").ask("what is money?", top_k=1).rendered["disclaimer"].lower()
+    for forbidden_claim in (
+        "both engines agree", "engines agree", "reached consensus",
+        "in consensus", "cross-model confirmation", "engines confirm",
+        "both engines disagree",
+    ):
+        assert forbidden_claim not in lowered, forbidden_claim
+    assert "gemini" in lowered
+
+
+@pytest.mark.parametrize("status", _FALLBACKS)
+def test_g7_fallback_keeps_the_renderer_disclaimer(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    result = _attempted_core(status).ask("what is money?", top_k=1)
+    assert result.rendered["disclaimer"] == "single-engine disclaimer"
+
+
+def test_g7_disabled_rendered_is_the_renderers_own_object(monkeypatch):
+    _patch_gate(monkeypatch)
+    core = _core(composer=None)
+    core._renderer = renderer = _CapturingRenderer()
+    result = core.ask("what is money?", top_k=1)
+    assert result.rendered is renderer.outputs[0]
+    assert set(result.rendered) == {
+        "question", "primary_answer", "mive_assessment", "uncertainty",
+        "evidence", "operational_metrics", "disclaimer",
+    }
+
+
+@pytest.mark.parametrize("status", sorted(_ATTEMPTED))
+def test_g7_composition_never_mutates_the_renderer_output(monkeypatch, status):
+    _patch_gate(monkeypatch)
+    core = _attempted_core(status)
+    core._renderer = renderer = _CapturingRenderer()
+    result = core.ask("what is money?", top_k=1)
+    base = renderer.outputs[0]
+    assert result.rendered is not base
+    assert "presentation" not in base
+    assert "composition" not in base["operational_metrics"]
+    assert base["disclaimer"] == "single-engine disclaimer"
+    assert base["primary_answer"] == _report().abstract

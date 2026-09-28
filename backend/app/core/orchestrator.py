@@ -108,6 +108,19 @@ TurnRecordObserver = Callable[[TurnRecord], None]
 # context, primary engine input, the ExecutionProfile, or the TurnRecord.
 _RESPONSE_DEPTHS = ("BRIEF", "STANDARD", "DEEP")
 
+# G7: the disclaimer a COMPOSED turn ships instead of the renderer's
+# single-execution one. The displayed text was restyled by a separate
+# presentation call, so the single-execution wording alone would be untrue.
+# "was instructed not to" — not "does not": composer output is not verified.
+_COMPOSED_DISCLAIMER_TEMPLATE = (
+    "The interpretation in this response was produced by a single configured "
+    "model execution ({engine_id}). A separate presentation step, run under "
+    "the VOE Dialogue Profile {version}, then restyled its wording and was "
+    "instructed not to add claims or evidence. No second, independent model "
+    "interpretation was run for this turn, so no cross-model agreement, "
+    "disagreement, or consensus claim applies."
+)
+
 
 def _turn_failure_for(exc: Exception) -> TurnFailure:
     """Bind why a turn failed, without widening what the system discloses.
@@ -458,26 +471,35 @@ class Core:
                 composer_input = self._build_composer_input(
                     q, report, response_depth=response_depth
                 )
+                # G3: Core's own span around the whole compose() attempt, on
+                # the injected clock — measured on success AND fallback alike,
+                # distinct from the composer-reported provider-call latency.
+                composition_result: ResponseComposerResult | None = None
+                composition_started = self._clock.monotonic_ms()
                 try:
                     composition_result = self._composer.compose(composer_input)
                 except ResponseComposerProviderError:
-                    composition_metrics = self._composition_fallback_metrics(
-                        "FALLBACK_PROVIDER_ERROR"
-                    )
+                    composition_status = "FALLBACK_PROVIDER_ERROR"
                 except ResponseComposerOutputError:
+                    composition_status = "FALLBACK_MALFORMED_OUTPUT"
+                else:
+                    composition_status = "COMPOSED"
+                attempt_latency_ms = self._clock.monotonic_ms() - composition_started
+
+                if composition_result is None:
                     composition_metrics = self._composition_fallback_metrics(
-                        "FALLBACK_MALFORMED_OUTPUT"
+                        composition_status, attempt_latency_ms
                     )
                 else:
                     final_answer = composition_result.response.composed_text
                     composition_metrics = self._composition_success_metrics(
-                        composition_result
+                        composition_result, attempt_latency_ms
                     )
 
             if composition_metrics is None:
                 # Disabled, or no composer configured: the exact pre-profile
                 # object, untouched — never even shallow-copied, and no
-                # "composition" key anywhere in its metrics.
+                # "composition" or "presentation" key anywhere in it.
                 final_rendered = base_rendered
                 final_metrics_dict = metrics.to_dict()
             else:
@@ -485,10 +507,38 @@ class Core:
                 # `final_rendered["operational_metrics"]` and
                 # `AskResult.metrics` below — never two independently
                 # constructed representations of the same turn.
-                final_metrics_dict = {**metrics.to_dict(), "composition": composition_metrics}
+                #
+                # G3: on a turn that attempted composition, the turn totals
+                # cover it: total_latency_ms adds the attempt span to the
+                # pipeline span (which, like the Turn Record's
+                # pipeline_latency_ms, still ends before rendering), and
+                # total_estimated_cost adds the composition cost — or is None
+                # whenever that cost is unknown, including every fallback.
+                # `providers` stays IVE-only.
+                final_metrics_dict = {
+                    **metrics.to_dict(),
+                    "total_latency_ms": round(total_ms + attempt_latency_ms, 3),
+                    "total_estimated_cost": self._total_cost_with_composition(
+                        total_cost, composition_metrics["estimated_cost"]
+                    ),
+                    "composition": composition_metrics,
+                }
+                composed = composition_status == "COMPOSED"
                 final_rendered = dict(base_rendered)
                 final_rendered["primary_answer"] = final_answer
                 final_rendered["operational_metrics"] = final_metrics_dict
+                # G7: explicit public presentation disclosure, present only
+                # when composition was attempted. A fallback keeps the
+                # renderer's disclaimer: the text shown IS the single
+                # execution's own answer.
+                final_rendered["presentation"] = {
+                    "composition_status": "COMPOSED" if composed else "FALLBACK"
+                }
+                if composed:
+                    final_rendered["disclaimer"] = _COMPOSED_DISCLAIMER_TEMPLATE.format(
+                        engine_id=report.engine_id,
+                        version=self._voe_runtime_profile.binding.profile_version,
+                    )
 
             # --- turn closure: exactly one immutable Turn Record ---
             # Reached only after the renderer completed, so the record states a turn
@@ -918,12 +968,14 @@ class Core:
             response_depth=response_depth,
         )
 
-    def _composition_fallback_metrics(self, status: str) -> dict:
+    def _composition_fallback_metrics(self, status: str, attempt_latency_ms: float) -> dict:
         """Truthful disclosure of a failed composition attempt: no usage,
         cost, or latency fact the runtime did not actually observe is ever
         fabricated. Each stays `None`/`False`, exactly as a stage that did
         not complete produces no fact for that field elsewhere in this
-        module (see `_materialize_failed_turn_record`'s own discipline)."""
+        module (see `_materialize_failed_turn_record`'s own discipline).
+        `attempt_latency_ms` IS observed — Core timed the attempt itself —
+        so it is recorded; the composer-reported `latency_ms` is not."""
         binding = self._voe_runtime_profile.binding
         return {
             "status": status,
@@ -933,6 +985,7 @@ class Core:
             "output_tokens": None,
             "usage_is_estimated": False,
             "latency_ms": None,
+            "attempt_latency_ms": round(attempt_latency_ms, 3),
             "estimated_cost": None,
             "voe_profile_id": binding.profile_id,
             "voe_profile_version": binding.profile_version,
@@ -941,13 +994,16 @@ class Core:
             ),
         }
 
-    def _composition_success_metrics(self, result: ResponseComposerResult) -> dict:
+    def _composition_success_metrics(
+        self, result: ResponseComposerResult, attempt_latency_ms: float
+    ) -> dict:
         """Truthful disclosure of a completed composition: every usage fact
         is carried verbatim from what the composer itself already preserved
         (never recomputed here). `estimated_cost` is computed through the
         existing `PricingPort`, exactly mirroring how `_provider_metrics`
         already prices the IVE side — no pricing logic is duplicated inside
-        `response_composer`."""
+        `response_composer`. `latency_ms` is the composer-measured provider
+        call; `attempt_latency_ms` is Core's span around the whole attempt."""
         binding = self._voe_runtime_profile.binding
         return {
             "status": "COMPOSED",
@@ -957,6 +1013,7 @@ class Core:
             "output_tokens": result.output_tokens,
             "usage_is_estimated": result.usage_is_estimated,
             "latency_ms": round(result.latency_ms, 3),
+            "attempt_latency_ms": round(attempt_latency_ms, 3),
             "estimated_cost": self._pricing.estimate_cost(
                 result.requested_model, result.input_tokens, result.output_tokens
             ),
@@ -966,3 +1023,18 @@ class Core:
                 binding.runtime_behavioral_fingerprint_sha256
             ),
         }
+
+    @staticmethod
+    def _total_cost_with_composition(
+        ive_total_cost: float | None, composition_cost: float | None
+    ) -> float | None:
+        """G3: the turn's total estimated cost once composition was attempted.
+
+        The same rule `ask()` already applies to provider costs: any unknown
+        part makes the total unknown — never a partial sum presented as the
+        whole. A fallback always has an unknown composition cost (the provider
+        may still have billed the attempt), so its total is always None.
+        """
+        if ive_total_cost is None or composition_cost is None:
+            return None
+        return round(ive_total_cost + composition_cost, 8)

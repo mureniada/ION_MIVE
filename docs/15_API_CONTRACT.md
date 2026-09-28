@@ -83,6 +83,63 @@ exposed at the HTTP layer today. An envelope exposing those fields (as an
 earlier draft of this document showed) is a **proposed future shape, not the
 implemented current contract** — it must not be treated as already built.
 
+#### Single-engine response shape (`STANDARD_GEMINI`, mode `SINGLE`)
+Under a single-engine Model Execution Profile the renderer's `render_single`
+output has the same seven top-level keys, with these differences (per
+`backend/app/modules/renderer/renderer.py`):
+
+- `mive_assessment` is `null` — no comparison ran.
+- `uncertainty` is `{ "reported": [ "string" ] }` — the one report's own
+  uncertainty, verbatim.
+- `operational_metrics.comparison_latency_ms` is `null`, and `providers`
+  holds exactly one entry.
+- `disclaimer` states that a single configured model execution produced the
+  response and that no cross-model claim applies.
+
+#### VOE composition additions (only when `VOE_PROFILE_ENABLED=true`)
+When VOE Dialogue Profile composition is **attempted** for a turn (see
+`backend/app/core/orchestrator.py`), the response differs from the shape
+above as follows. When it is not attempted (VOE disabled), the response is
+exactly the renderer's output, byte for byte, and none of these keys exist.
+
+- `presentation` (new top-level key):
+  `{ "composition_status": "COMPOSED" | "FALLBACK" }`.
+- `primary_answer`: on `COMPOSED`, the composer's restyled text; on
+  `FALLBACK`, the renderer's deterministic answer, unchanged.
+- `disclaimer`: on `COMPOSED`, replaced by a disclaimer stating that the
+  interpretation came from one configured model execution and that a
+  separate presentation step, run under the named VOE Dialogue Profile
+  version, restyled its wording and was instructed not to add claims or
+  evidence. On `FALLBACK`, the renderer's disclaimer, unchanged.
+- `uncertainty` and `evidence`: always unchanged.
+- `operational_metrics.composition` (new block):
+  ```json
+  { "status": "COMPOSED | FALLBACK_PROVIDER_ERROR | FALLBACK_MALFORMED_OUTPUT",
+    "provider": "string|null", "model": "string|null",
+    "input_tokens": 0, "output_tokens": 0, "usage_is_estimated": false,
+    "latency_ms": 0.0, "attempt_latency_ms": 0.0, "estimated_cost": 0.0,
+    "voe_profile_id": "string", "voe_profile_version": "string",
+    "voe_runtime_behavioral_fingerprint_sha256": "string" }
+  ```
+  `latency_ms` is the composer-measured provider call (`null` on fallback);
+  `attempt_latency_ms` is the backend's own measurement of the whole
+  composition attempt, present on success and fallback alike. On fallback,
+  `provider`, `model`, tokens and `estimated_cost` are `null`.
+- `operational_metrics.total_latency_ms`: the pipeline span (which ends
+  before rendering) **plus** `composition.attempt_latency_ms`.
+- `operational_metrics.total_estimated_cost`: the provider total **plus**
+  `composition.estimated_cost`; `null` whenever the composition cost is
+  unknown, which includes every fallback (the provider may still have billed
+  the attempt).
+- `operational_metrics.providers` stays IVE-only; the composition call is
+  never listed there.
+
+All cost values are estimates from the dated pricing table
+(`backend/app/modules/telemetry/pricing.py`), not billing figures: the Gemini
+backend does not capture thinking tokens, so a thinking model's cost can be
+under-reported. The internal Turn Record's `pipeline_latency_ms` is
+unchanged by composition and is not part of this HTTP contract.
+
 ### `GET /ask/stream` — DEBUG ONLY
 Exposed **only when `DEBUG=true`**. When `DEBUG=false` this route must not exist (return 404). Server-Sent Events; one event per completed stage, ending with the final result.
 
