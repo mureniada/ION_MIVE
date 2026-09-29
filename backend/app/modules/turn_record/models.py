@@ -32,6 +32,15 @@ rather than nullable on purpose: a permanently-`None` field would assert that a
 layer ran and produced nothing, which is not what happened. Absence means
 absence.
 
+v0.2 amendment TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md).
+One optional binding is added, `conversation_context`: the bounded prior-turn
+context a follow-up turn ACTUALLY RAN WITH, carried verbatim with its
+canonical hash and the exact retrieval query, so the turn stays
+reconstructable. It is an input record, not evidence and not authority, and it
+is `None` exactly when the turn ran without prior-turn context. Every other
+structural absence above still holds: no session identity, no turn ordinal,
+no parent-turn link, no rendered answer, no evidence content.
+
 This module imports the standard library only. No Core, orchestrator, Core
 Adapter, governed-evidence, admission, provenance, retrieval, provider, MIVE,
 renderer, container, transport or persistence entry point is reachable from
@@ -49,8 +58,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-TURN_RECORD_CONTRACT_ID = "ION_TURN_RECORD_V0_1"
-TURN_RECORD_VERSION = "0.1"
+TURN_RECORD_CONTRACT_ID = "ION_TURN_RECORD_V0_2"
+TURN_RECORD_VERSION = "0.2"
 
 # The turn identity rule, recorded as a fixed literal so it is STATED rather
 # than assumed. The runtime's `request_id` already uniquely identifies one turn;
@@ -252,6 +261,39 @@ class TurnFailure:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PriorTurnBinding:
+    """One prior turn exactly as it was supplied to this turn (TR-A1).
+
+    The four remembered facts, verbatim: the prior COMPLETED turn's identity,
+    its question, its IVE abstract, and its IVE uncertainty items. No evidence
+    identity, evidence content, claim, composed text or rendered answer has a
+    field here.
+    """
+
+    turn_id: str
+    question: str
+    interpretation: str
+    uncertainty: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationContextBinding:
+    """The bounded conversation context a turn ran with, stored verbatim (D4).
+
+    `context_sha256` is the canonical hash of `prior_turns`; the materializer
+    recomputes it and refuses a mismatch. `retrieval_query` is the exact string
+    retrieval received for this turn. Together with the turn's question and
+    admitted evidence this reconstructs the model input byte for byte.
+    """
+
+    context_contract_id: str
+    context_version: str
+    context_sha256: str
+    retrieval_query: str
+    prior_turns: tuple[PriorTurnBinding, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class TurnRecord:
     """The complete, immutable, provider- and transport-neutral record of one turn.
 
@@ -330,6 +372,7 @@ class TurnRecord:
     mive_overall_status: str | None = None
     execution_profile: ExecutionProfileBinding | None = None
     failure: TurnFailure | None = None
+    conversation_context: ConversationContextBinding | None = None
     turn_identity_basis: str = TURN_IDENTITY_BASIS_REQUEST_ID
     question_normalization: str = QUESTION_NORMALIZATION_STRIP
     turn_record_contract_id: str = TURN_RECORD_CONTRACT_ID
@@ -354,6 +397,13 @@ class TurnRecord:
             raise TurnRecordMaterializationError(
                 "a FAILED turn must carry its failure; a bare FAILED record "
                 "would lose the only fact that distinguishes it"
+            )
+        if self.conversation_context is not None and not isinstance(
+            self.conversation_context, ConversationContextBinding
+        ):
+            raise TurnRecordMaterializationError(
+                "conversation_context must be a ConversationContextBinding or "
+                f"None, found {type(self.conversation_context).__name__}"
             )
 
         # One turn names one Context Pack. The law is conditional on the

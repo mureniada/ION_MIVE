@@ -688,6 +688,19 @@ def test_19_to_22_private_state_carries_no_forbidden_content(monkeypatch):
     assert isinstance(entry, SessionTurnEntry)
     assert isinstance(entry.turn_record, TurnRecord)
 
+    # Amended by OD22-08-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+    # the one permitted addition is the bounded `context_window`, holding only
+    # PriorTurnContext values (question, IVE abstract, IVE uncertainty).
+    from app.modules.conversation_context import MAX_PRIOR_TURNS, PriorTurnContext
+
+    assert state_attr_names == {
+        "session_id", "created_at", "status", "next_turn_ordinal",
+        "active_reservation", "entries", "context_window", "turn_lock", "guard",
+    }
+    assert state.context_window.maxlen == MAX_PRIOR_TURNS
+    for prior in state.context_window:
+        assert isinstance(prior, PriorTurnContext)
+
 
 # --------------------------------------------------------------------- #
 # 23/24. prior TurnRecord never passed into the next Core.ask(); no
@@ -743,12 +756,14 @@ def test_25_controller_touches_no_pipeline_module_directly():
 # 26. TurnRecord model fields remain unchanged
 # --------------------------------------------------------------------- #
 def test_26_turn_record_fields_unchanged():
+    # Amended by TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+    # exactly one field added, `conversation_context`.
     assert {f.name for f in dataclasses.fields(TurnRecord)} == {
         "turn_id", "closure_state", "turn_started_at", "turn_closed_at",
         "configuration", "question", "retrieval_latency_ms",
         "comparison_latency_ms", "pipeline_latency_ms", "context_pack_id",
         "governed_evidence", "model_executions", "mive_overall_status",
-        "execution_profile", "failure", "turn_identity_basis",
+        "execution_profile", "failure", "conversation_context", "turn_identity_basis",
         "question_normalization", "turn_record_contract_id",
         "turn_record_version",
     }

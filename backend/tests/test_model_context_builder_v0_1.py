@@ -41,6 +41,8 @@ from app.modules.model_context import (
     MODEL_CONTEXT_VERSION,
     QUESTION_NORMALIZATION_STRIP,
     CandidateContentProjection,
+    ConversationMemorySegment,
+    ConversationMemoryTurn,
     EvidenceContextItem,
     ModelContextAssembly,
     ModelContextBuildError,
@@ -483,9 +485,12 @@ def test_t16_13_user_input_is_structurally_distinct_from_evidence():
     for item in assembly.evidence:
         assert item.content != assembly.question
 
+    # Amended by MC-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+    # CONVERSATION_MEMORY is implemented for the bounded prior-turn use only.
     assert IMPLEMENTED_SEGMENT_CLASSES == (
         ModelContextSegmentClass.EVIDENCE,
         ModelContextSegmentClass.USER_INPUT,
+        ModelContextSegmentClass.CONVERSATION_MEMORY,
     )
     # the Builder never normalizes: an un-normalized question is refused
     with pytest.raises(ModelContextBuildError):
@@ -511,12 +516,30 @@ def test_t16_15_dialogue_instruction_payload_is_structurally_absent():
             assert token not in name, (token, name)
 
 
-def test_t16_16_conversation_memory_payload_is_structurally_absent():
-    assert ModelContextSegmentClass.CONVERSATION_MEMORY in DEFERRED_SEGMENT_CLASSES
+def test_t16_16_conversation_memory_is_one_bounded_separate_segment():
+    # Amended by MC-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md).
+    # Was: CONVERSATION_MEMORY structurally absent. Now: implemented as ONE
+    # separate, optional field of its own type — never inside evidence,
+    # coverage or projections, and with no session / history / transcript /
+    # message field anywhere.
+    assert ModelContextSegmentClass.CONVERSATION_MEMORY in IMPLEMENTED_SEGMENT_CLASSES
+    assert ModelContextSegmentClass.CONVERSATION_MEMORY not in DEFERRED_SEGMENT_CLASSES
 
-    for token in ("conversation", "memory", "session", "history", "transcript", "message"):
+    for token in ("conversation", "memory"):
+        for name in _all_field_names() - {"conversation_memory"}:
+            assert token not in name, (token, name)
+    for token in ("session", "history", "transcript", "message"):
         for name in _all_field_names():
             assert token not in name, (token, name)
+
+    # the segment types carry no identity, citation or evidence field
+    assert _field_names(ConversationMemoryTurn) == {
+        "question", "interpretation", "uncertainty",
+    }
+    assert _field_names(ConversationMemorySegment) == {"context_sha256", "turns"}
+
+    # without a conversation context the assembly is exactly the v0.1 shape
+    assert _build(("EV-1",)).conversation_memory is None
 
 
 def test_t16_segment_vocabulary_is_complete_and_partitioned():
@@ -532,8 +555,9 @@ def test_t16_segment_vocabulary_is_complete_and_partitioned():
     )
     assert not set(IMPLEMENTED_SEGMENT_CLASSES) & set(DEFERRED_SEGMENT_CLASSES)
 
-    # the assembly's whole field set: exactly the two implemented segments plus
-    # identity and coverage. No deferred class has anywhere to live.
+    # the assembly's whole field set: exactly the three implemented segments
+    # (MC-A1 adds conversation_memory) plus identity and coverage. No deferred
+    # class has anywhere to live.
     assert _field_names(ModelContextAssembly) == {
         "question",
         "question_normalization",
@@ -541,6 +565,7 @@ def test_t16_segment_vocabulary_is_complete_and_partitioned():
         "context_pack_id",
         "evidence",
         "coverage",
+        "conversation_memory",
         "model_context_contract_id",
         "model_context_version",
     }
@@ -690,6 +715,8 @@ def test_t16_21_public_export_surface_is_exact_and_closed():
         "MODEL_CONTEXT_VERSION",
         "QUESTION_NORMALIZATION_STRIP",
         "CandidateContentProjection",
+        "ConversationMemorySegment",
+        "ConversationMemoryTurn",
         "EvidenceContextItem",
         "ModelContextAssembly",
         "ModelContextBuildError",
@@ -701,8 +728,9 @@ def test_t16_21_public_export_surface_is_exact_and_closed():
     for name in model_context.__all__:
         assert hasattr(model_context, name), name
 
-    assert MODEL_CONTEXT_CONTRACT_ID == "ION_MODEL_CONTEXT_ASSEMBLY_V0_1"
-    assert MODEL_CONTEXT_VERSION == "0.1"
+    # Amended by MC-A1: contract v0.1 -> v0.2.
+    assert MODEL_CONTEXT_CONTRACT_ID == "ION_MODEL_CONTEXT_ASSEMBLY_V0_2"
+    assert MODEL_CONTEXT_VERSION == "0.2"
     assert model_context.MODEL_CONTEXT_BUILDER_ID == "ION_MODEL_CONTEXT_BUILDER_V0_1"
     assert DISPOSITION_ADMITTED == ADMITTED
     assert QUESTION_NORMALIZATION_STRIP == "STRIP"

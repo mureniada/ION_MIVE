@@ -125,6 +125,8 @@ The `TurnRecord` contract itself (`backend/app/modules/turn_record/models.py`) *
 
 **OD22-08** — Session state may contain lifecycle/identity metadata and immutable `TurnRecord` references only. No evidence content, model-output text, rendered answer, conversation memory, or dialogue instructions.
 
+> Amended 2026-09-29 by **OD22-08-A1** (`docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md`). Session state may additionally hold a bounded private window of the last 2 COMPLETED turns, each limited to its question, IVE abstract and IVE uncertainty. The original text above is kept unchanged. OD22-09 still holds: every turn re-retrieves, and no evidence is reused across turns.
+
 **OD22-09** — No automatic cross-turn evidence reuse.
 
 **OD22-10** — Adaptive Dialogue is outside Task 22.

@@ -316,12 +316,14 @@ def test_16_structural_fields_contain_no_forbidden_content():
 # 17. existing TurnRecord dataclass fields are unchanged
 # --------------------------------------------------------------------- #
 def test_17_turn_record_fields_unchanged():
+    # Amended by TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+    # exactly one field added, `conversation_context`.
     assert {f.name for f in dataclasses.fields(TurnRecord)} == {
         "turn_id", "closure_state", "turn_started_at", "turn_closed_at",
         "configuration", "question", "retrieval_latency_ms",
         "comparison_latency_ms", "pipeline_latency_ms", "context_pack_id",
         "governed_evidence", "model_executions", "mive_overall_status",
-        "execution_profile", "failure", "turn_identity_basis",
+        "execution_profile", "failure", "conversation_context", "turn_identity_basis",
         "question_normalization", "turn_record_contract_id",
         "turn_record_version",
     }

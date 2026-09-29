@@ -39,6 +39,7 @@ from ..modules.core_adapter import (
     CoreAdapterRequest,
     CoreInvocationMode,
 )
+from ..modules.conversation_context import ConversationContext, retrieval_query_for
 from ..modules.execution_profile import ExecutionMode, ExecutionProfile
 from ..modules.governed_evidence import (
     GovernedEvidenceMaterializationError,
@@ -147,6 +148,19 @@ def _turn_failure_for(exc: Exception) -> TurnFailure:
     return TurnFailure(error_type=type(exc).__name__)
 
 
+def _context_binding_kwargs(
+    conversation_context: ConversationContext | None, retrieval_query: str | None
+) -> dict:
+    """TR-A1 arguments for a Turn Record materializer — or none at all.
+
+    A turn without conversation context calls the materializer with exactly
+    the pre-Phase-2 arguments, so the no-context closure is unchanged.
+    """
+    if conversation_context is None:
+        return {}
+    return {"conversation_context": conversation_context, "retrieval_query": retrieval_query}
+
+
 def _completed_execution_bindings(
     reports: tuple[IVEReport, ...], metrics: tuple[ProviderMetrics, ...]
 ) -> tuple[ModelExecutionBinding, ...]:
@@ -245,7 +259,14 @@ class Core:
         progress: ProgressCallback | None = None,
         on_turn_record: TurnRecordObserver | None = None,
         response_depth: str | None = None,
+        conversation_context: ConversationContext | None = None,
     ) -> AskResult:
+        # Phase 2 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+        # `conversation_context` is the bounded prior-turn context of the same
+        # session, supplied only by the SessionController for a follow-up turn.
+        # `None` — the first turn of a session, and every legacy /ask call — is
+        # the exact pre-Phase-2 path: same retrieval query object, same model
+        # context shape, same prompt bytes, no citation-subset guard.
         emit = progress or (lambda *_: None)
         capture = on_turn_record or (lambda _: None)
         request_id = uuid.uuid4().hex
@@ -271,6 +292,10 @@ class Core:
         comparison_ms: float | None = None
         mive_status: str | None = None
         total_ms: float | None = None
+        # Bound only once the supplied context has been validated below, so a
+        # rejected context is never recorded as one the turn ran with.
+        bound_context: ConversationContext | None = None
+        bound_retrieval_query: str | None = None
 
         # At most ONE Turn Record materialization per turn, success or failure.
         # This is what makes the mechanism non-recursive by construction: it is
@@ -301,12 +326,28 @@ class Core:
                     "response_depth must be None or one of 'BRIEF', 'STANDARD', 'DEEP'.",
                     stage=errors.STAGE_CONFIGURATION,
                 )
+            if conversation_context is not None and not isinstance(
+                conversation_context, ConversationContext
+            ):
+                raise errors.IonError(
+                    "conversation_context must be None or a ConversationContext.",
+                    stage=errors.STAGE_CONFIGURATION,
+                )
+            # RQ-A1: with context, the most recent prior USER question, a
+            # newline, then this question; without context, `q` itself — the
+            # identical object retrieval has always received. Prior model text
+            # never reaches retrieval. The Context Pack, governance, the model
+            # context question and the Turn Record question all stay `q`.
+            retrieval_query = retrieval_query_for(q, conversation_context)
+            if conversation_context is not None:
+                bound_context = conversation_context
+                bound_retrieval_query = retrieval_query
 
             # --- retrieval ---
             emit("retrieval", "started")
             t = self._clock.monotonic_ms()
             try:
-                evidence: list[Evidence] = self._retrieval.retrieve(q, k)
+                evidence: list[Evidence] = self._retrieval.retrieve(retrieval_query, k)
             except errors.IonError:
                 raise
             except Exception as exc:  # adapter-level failure
@@ -388,7 +429,12 @@ class Core:
             # model input" a property of CONSTRUCTION rather than an upstream equality
             # assertion — a non-admitted candidate is never looked up by the frozen
             # Builder, so it has no path into the object the engines receive.
-            model_input = self._materialize_model_context(governed_evidence, pack, q)
+            if bound_context is None:
+                model_input = self._materialize_model_context(governed_evidence, pack, q)
+            else:
+                model_input = self._materialize_model_context(
+                    governed_evidence, pack, q, bound_context
+                )
 
             # --- engine execution, from POLICY, not a literal (TASK 20) ---
             # WHICH engine(s) run, and in what order, is the active
@@ -412,6 +458,16 @@ class Core:
             # policy and the progress/error stage it produces.
             report = self._run_engine(engine_id, model_input, engine_id, emit)
             completed_reports = (report,)
+
+            # --- CG-A1: citation-subset guard, context turns ONLY ---
+            # The compensating boundary for the PRIOR CONVERSATION block: on a
+            # turn that carried one, every cited id must be an evidence item
+            # this turn's model context actually contained. A violation fails
+            # the turn closed — nothing is stripped or repaired. Without
+            # context this is never called, so the pre-Phase-2 behaviour (the
+            # renderer silently excluding a stray citation, D20-20) is unchanged.
+            if bound_context is not None:
+                self._enforce_citation_subset(report, model_input)
 
             # --- comparison: NOT APPLICABLE under SINGLE (TASK 20 / D20-01) ---
             # SINGLE authorizes exactly one engine. MIVE compares two
@@ -588,6 +644,7 @@ class Core:
                 retrieval_latency_ms=retrieval_ms,
                 comparison_latency_ms=None,
                 pipeline_latency_ms=total_ms,
+                **_context_binding_kwargs(bound_context, bound_retrieval_query),
             )
 
             # Best-effort capture (OD22-11): an observer exception is
@@ -639,6 +696,7 @@ class Core:
                         retrieval_latency_ms=retrieval_ms,
                         comparison_latency_ms=comparison_ms,
                         pipeline_latency_ms=total_ms,
+                        **_context_binding_kwargs(bound_context, bound_retrieval_query),
                     )
                     # Best-effort capture (OD22-11), same guarantee as the
                     # success path: invoked exactly once, only now that a real
@@ -701,7 +759,11 @@ class Core:
             ) from exc
 
     def _materialize_model_context(
-        self, governed_basis: GovernedEvidenceSet, pack, question: str
+        self,
+        governed_basis: GovernedEvidenceSet,
+        pack,
+        question: str,
+        conversation_context: ConversationContext | None = None,
     ) -> ModelContextAssembly:
         """Materialize the ONLY object that may cross into model execution.
 
@@ -731,11 +793,17 @@ class Core:
             )
             for d in pack.documents
         ]
+        # MC-A1: the bounded prior-turn context enters ONLY the separate
+        # CONVERSATION_MEMORY segment; without one the call is exactly v0.1's.
+        extra = {} if conversation_context is None else {
+            "conversation_context": conversation_context
+        }
         try:
             return build_model_context(
                 governed_basis=governed_basis,
                 candidate_projections=projections,
                 question=question,
+                **extra,
             )
         except ModelContextBuildError as exc:
             raise errors.ContextPackError(
@@ -758,6 +826,8 @@ class Core:
         retrieval_latency_ms: float,
         comparison_latency_ms: float,
         pipeline_latency_ms: float,
+        conversation_context: ConversationContext | None = None,
+        retrieval_query: str | None = None,
     ) -> TurnRecord:
         """Record the closure of one COMPLETED turn.
 
@@ -816,7 +886,32 @@ class Core:
             comparison_latency_ms=comparison_latency_ms,
             pipeline_latency_ms=pipeline_latency_ms,
             execution_profile=self._execution_profile_binding(),
+            **_context_binding_kwargs(conversation_context, retrieval_query),
         )
+
+    def _enforce_citation_subset(self, report: IVEReport, model_input) -> None:
+        """CG-A1: fail closed on a citation outside this turn's model context.
+
+        Called ONLY for a turn that carried a non-empty conversation context.
+        `allowed` is exactly the evidence the executed engine received — the
+        same basis the renderer resolves citations against (D20-20). Claims
+        and relations are both checked. Nothing is stripped or repaired: the
+        turn fails with a normalization-stage error (HTTP 422 through the
+        existing stage map), and its FAILED Turn Record keeps the context.
+        """
+        allowed = {item.candidate_id for item in model_input.evidence}
+        cited: set[str] = set()
+        for claim in report.claims:
+            cited.update(claim.evidence_document_ids)
+        for relation in report.relations:
+            cited.update(relation.evidence_document_ids)
+        stray = sorted(cited - allowed)
+        if stray:
+            raise errors.IonError(
+                "IVE report cites evidence not in this turn's admitted model "
+                "context: " + ", ".join(stray),
+                stage=errors.STAGE_NORMALIZATION,
+            )
 
     def _execution_profile_binding(self) -> ExecutionProfileBinding:
         """Bind this Core's own active policy identity, for provenance only.
@@ -851,6 +946,8 @@ class Core:
         retrieval_latency_ms: float | None,
         comparison_latency_ms: float | None,
         pipeline_latency_ms: float | None,
+        conversation_context: ConversationContext | None = None,
+        retrieval_query: str | None = None,
     ) -> TurnRecord:
         """Record the closure of one FAILED turn, from facts already observed.
 
@@ -895,6 +992,7 @@ class Core:
             # failure (§26): failure of the sole configured engine still
             # truthfully records WHICH policy authorized that one attempt.
             execution_profile=self._execution_profile_binding(),
+            **_context_binding_kwargs(conversation_context, retrieval_query),
         )
 
     def _run_engine(

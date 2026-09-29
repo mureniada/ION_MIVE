@@ -18,13 +18,18 @@ disposition, authority, confidence or score field through which it could be
 read as one.
 
 Segment vocabulary. The canonical contract names five conceptual segment
-classes. At v0.1 only two have a payload here — EVIDENCE and USER_INPUT — and
-the other three have NO FIELD ANYWHERE IN THIS MODULE, so they cannot be
-carried, defaulted or fabricated. MODEL_OUTPUT in particular is structurally
+classes. At v0.1 only two had a payload here — EVIDENCE and USER_INPUT. v0.2
+(amendment MC-A1, docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md) adds a
+third, CONVERSATION_MEMORY, for one bounded use only: at most two prior
+COMPLETED turns of the same session, each reduced to its question, its IVE
+abstract and its IVE uncertainty. It is a separate field of a separate type,
+so prior conversation can never be read as evidence. The remaining two classes
+still have NO FIELD ANYWHERE IN THIS MODULE, so they cannot be carried,
+defaulted or fabricated. MODEL_OUTPUT in particular stays structurally
 impossible as same-turn input: the assembly is built strictly before model
-execution and has nowhere to put a model answer. The full vocabulary is
-declared so the partition is recorded rather than implied, and the two tuples
-below state which half is implemented and which half is deferred.
+execution and has nowhere to put this turn's model answer. The full vocabulary
+is declared so the partition is recorded rather than implied, and the two
+tuples below state which part is implemented and which part is deferred.
 
 This module imports the standard library only. No Core, Core Adapter,
 governed-evidence, admission, provenance, retrieval, provider, renderer,
@@ -45,8 +50,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-MODEL_CONTEXT_CONTRACT_ID = "ION_MODEL_CONTEXT_ASSEMBLY_V0_1"
-MODEL_CONTEXT_VERSION = "0.1"
+MODEL_CONTEXT_CONTRACT_ID = "ION_MODEL_CONTEXT_ASSEMBLY_V0_2"
+MODEL_CONTEXT_VERSION = "0.2"
 
 # The single normalization the Product already applies to the user question
 # before this module ever sees it. Recorded as a fixed contract literal so the
@@ -89,21 +94,21 @@ class ModelContextSegmentClass(str, Enum):
     MODEL_OUTPUT = "MODEL_OUTPUT"
 
 
-# The two classes that carry a payload at v0.1, because a runtime input for each
-# actually exists: the ADMITTED governed basis, and the normalized question.
+# The classes that carry a payload at v0.2, because a runtime input for each
+# actually exists: the ADMITTED governed basis, the normalized question, and
+# (MC-A1) the bounded prior-turn context of the same session, when there is one.
 IMPLEMENTED_SEGMENT_CLASSES = (
     ModelContextSegmentClass.EVIDENCE,
     ModelContextSegmentClass.USER_INPUT,
+    ModelContextSegmentClass.CONVERSATION_MEMORY,
 )
 
 # Deferred because no runtime input exists to fill them, not because they are
-# unwanted: there is no Adaptive Dialogue, no session state and no conversation
-# history in the current request path, and a model answer does not exist yet at
-# the point this assembly is built. Fabricating any of them would invent
-# material the turn never produced.
+# unwanted: Adaptive Dialogue issues no dialogue instruction, and this turn's
+# model answer does not exist yet at the point this assembly is built.
+# Fabricating either would invent material the turn never produced.
 DEFERRED_SEGMENT_CLASSES = (
     ModelContextSegmentClass.DIALOGUE_INSTRUCTION,
-    ModelContextSegmentClass.CONVERSATION_MEMORY,
     ModelContextSegmentClass.MODEL_OUTPUT,
 )
 
@@ -194,21 +199,53 @@ class ModelContextCoverage:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ConversationMemoryTurn:
+    """One prior turn as the model may see it (MC-A1). Not evidence.
+
+    Exactly the question the user asked and the interpretation and uncertainty
+    that turn's IVE report gave. There is deliberately no identity, citation,
+    document id, claim, relation or composed text field, so nothing here can
+    be cited or mistaken for a context document.
+    """
+
+    question: str
+    interpretation: str
+    uncertainty: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationMemorySegment:
+    """The CONVERSATION_MEMORY segment: 1..2 prior turns, oldest first.
+
+    `context_sha256` binds the segment to the exact Conversation Context it
+    was projected from, so the turn stays reconstructable.
+    """
+
+    context_sha256: str
+    turns: tuple[ConversationMemoryTurn, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class ModelContextAssembly:
     """The complete, provider-neutral Model Context for one turn.
 
     Immutable, deterministic, and free of any runtime-generated identifier: the
     two identity fields are fixed contract literals, not a per-instance id.
 
-    USER_INPUT and EVIDENCE are separate fields of different types, so the user
-    question can never be read as evidence and no evidence item can be read as
-    user input.
+    USER_INPUT, EVIDENCE and CONVERSATION_MEMORY are separate fields of
+    different types, so the user question can never be read as evidence, no
+    evidence item can be read as user input, and prior conversation can never
+    be read as either.
 
-    Deliberately absent, with no field to carry them: model output, provider
-    prompts, provider messages, the system prompt, dialogue instructions,
-    conversation memory, retrieval metadata, native governance objects and
-    AskResult data. Provider serialization is a downstream concern; this
-    assembly is provider-neutral and names no provider.
+    `conversation_memory` is `None` whenever the turn carries no prior-turn
+    context (the first turn of a session, the legacy /ask path): such an
+    assembly is exactly the v0.1 shape.
+
+    Deliberately absent, with no field to carry them: this turn's model
+    output, provider prompts, provider messages, the system prompt, dialogue
+    instructions, retrieval metadata, native governance objects and AskResult
+    data. Provider serialization is a downstream concern; this assembly is
+    provider-neutral and names no provider.
     """
 
     question: str
@@ -217,6 +254,7 @@ class ModelContextAssembly:
     context_pack_id: str
     evidence: tuple[EvidenceContextItem, ...]
     coverage: ModelContextCoverage
+    conversation_memory: ConversationMemorySegment | None = None
     model_context_contract_id: str = MODEL_CONTEXT_CONTRACT_ID
     model_context_version: str = MODEL_CONTEXT_VERSION
 

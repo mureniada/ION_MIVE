@@ -61,18 +61,26 @@ is released before this method returns — never held anywhere near
 different `turn_lock` objects, so they are never globally serialized.
 
 Private runtime state (`_SessionState`) carries lifecycle/identity metadata
-and `SessionTurnEntry` REFERENCES only — the exact same closed shape
-`Session` itself enforces (OD22-08): no evidence content, no model-output
-text, no rendered answer, no conversation memory, no dialogue instruction.
-Every value returned to a caller is a fresh, immutable `Session` snapshot
-built from the already-frozen models in `session/models.py` — there is no
-second public Session representation.
+and `SessionTurnEntry` REFERENCES — the exact same closed shape `Session`
+itself enforces (OD22-08): no evidence content, no rendered answer, no
+dialogue instruction — plus, under amendment OD22-08-A1
+(docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md), ONE bounded private
+`context_window`: at most the last two COMPLETED turns of this session, each
+reduced to exactly its question, its IVE abstract and its IVE uncertainty
+(`PriorTurnContext`). FAILED captures and CLARIFY outcomes never enter it; it
+is never persisted, never shared across sessions, and never exposed on the
+public `Session` snapshot. The Adaptive Dialogue engine still receives only
+the current normalized question (OD23-05/06 unchanged). Every value returned
+to a caller is a fresh, immutable `Session` snapshot built from the
+already-frozen models in `session/models.py` — there is no second public
+Session representation.
 """
 
 from __future__ import annotations
 
 import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -81,6 +89,13 @@ from ..adaptive_dialogue import (
     DialogueDecisionType,
     DialogueReasonCode,
     DialogueTurnInput,
+)
+from ..conversation_context import (
+    MAX_PRIOR_TURNS,
+    ConversationContextError,
+    PriorTurnContext,
+    build_conversation_context,
+    prior_turn_from_ask_result,
 )
 from ..turn_record import TurnClosureState, TurnRecord
 from .models import (
@@ -163,11 +178,10 @@ class _SessionState:
     """Private mutable runtime state for one session. Never exposed publicly.
 
     Holds exactly: identity, lifecycle status, the next ordinal, the current
-    reservation (if any), and an append-only list of `SessionTurnEntry`
-    REFERENCES. Nothing else — no evidence, no model output, no rendered
-    text, no memory, no dialogue instruction; `SessionTurnEntry` itself
-    already carries none of that (see `session/models.py`), and this class
-    adds nothing beyond binding entries to their session.
+    reservation (if any), an append-only list of `SessionTurnEntry`
+    REFERENCES, and (OD22-08-A1) a bounded `context_window` of at most
+    `MAX_PRIOR_TURNS` `PriorTurnContext` values. Nothing else — no evidence,
+    no rendered text, no composed text, no dialogue instruction.
     """
 
     def __init__(self, session_id: str, created_at: str) -> None:
@@ -177,6 +191,9 @@ class _SessionState:
         self.next_turn_ordinal = 1
         self.active_reservation: ActiveTurnReservation | None = None
         self.entries: list[SessionTurnEntry] = []
+        # OD22-08-A1: oldest first; appended only after a COMPLETED capture;
+        # the deque's maxlen drops the oldest turn, nothing is summarized.
+        self.context_window: deque[PriorTurnContext] = deque(maxlen=MAX_PRIOR_TURNS)
         # Held for the full duration of one run_turn() call, Core.ask()
         # included — see the module docstring for why two lock roles exist.
         self.turn_lock = threading.Lock()
@@ -335,6 +352,19 @@ class SessionController:
             # never authoritative on its own until validated below.
             captured: list[TurnRecord] = []
 
+            # OD22-08-A1: the bounded context of THIS session's most recent
+            # COMPLETED turns, read under `guard`. `None` when there is
+            # nothing to remember (first turn), and then Core.ask() is called
+            # exactly as before Phase 2. Built strictly AFTER the dialogue
+            # seam above, which never sees it.
+            with state.guard:
+                window = tuple(state.context_window)
+            conversation_context = build_conversation_context(window)
+            context_kwargs = (
+                {} if conversation_context is None
+                else {"conversation_context": conversation_context}
+            )
+
             try:
                 # Exactly one Core.ask() call. The capture callback only
                 # ever appends the exact object Core hands it: it does not
@@ -344,6 +374,7 @@ class SessionController:
                 # `question`, so the two can never diverge.
                 result = self._core.ask(
                     normalized_question, top_k, on_turn_record=captured.append,
+                    **context_kwargs,
                 )
             except Exception:
                 # Best-effort preservation only. OD22-11's guarantee — an
@@ -361,6 +392,9 @@ class SessionController:
             else:
                 self._preserve_completed_capture(
                     state, session_id, turn_ordinal, captured
+                )
+                self._remember_completed_turn(
+                    state, captured[0].turn_id, normalized_question, result
                 )
                 return result
         finally:
@@ -399,6 +433,29 @@ class SessionController:
         with state.guard:
             state.entries.append(entry)
             state.next_turn_ordinal = turn_ordinal + 1
+
+    # ------------------------------------------------------------------ #
+    def _remember_completed_turn(
+        self, state: _SessionState, turn_id: str, question: str, result: AskResult,
+    ) -> None:
+        """OD22-08-A1: add one COMPLETED turn to this session's context window.
+
+        Reached only after `_preserve_completed_capture` accepted exactly one
+        COMPLETED record. Reads the turn's own IVE report (abstract and
+        uncertainty) — never the composed or rendered answer and never any
+        evidence. A turn that cannot be remembered is simply not remembered;
+        it never fails the turn that already completed.
+        """
+        try:
+            prior = prior_turn_from_ask_result(
+                turn_id=turn_id, question=question, ask_result=result
+            )
+        except ConversationContextError:
+            return
+        if prior is None:
+            return
+        with state.guard:
+            state.context_window.append(prior)
 
     # ------------------------------------------------------------------ #
     def _preserve_failed_capture(

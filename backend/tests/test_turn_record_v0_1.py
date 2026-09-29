@@ -390,9 +390,12 @@ def test_t18_08_identity_and_contract_literals_are_fixed_and_exact():
     record = _materialize()
     assert record.turn_identity_basis == "CORE_ASK_REQUEST_ID_V0_1"
     assert record.turn_identity_basis == TURN_IDENTITY_BASIS_REQUEST_ID
-    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_1"
+    # Amended by TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
+    # contract v0.1 -> v0.2. A record without conversation context carries none.
+    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_2"
     assert record.turn_record_contract_id == TURN_RECORD_CONTRACT_ID
-    assert record.turn_record_version == "0.1"
+    assert record.conversation_context is None
+    assert record.turn_record_version == "0.2"
     assert record.turn_record_version == TURN_RECORD_VERSION
 
 
@@ -731,6 +734,9 @@ def test_t18_21_public_exports_are_exact_and_closed():
         "TURN_RECORD_MATERIALIZER_ID",
         "TURN_RECORD_MATERIALIZER_VERSION",
         "TURN_RECORD_VERSION",
+        # TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md)
+        "ConversationContextBinding",
+        "PriorTurnBinding",
         "ExecutionProfileBinding",
         "GovernedEvidenceBinding",
         "ModelExecutionBinding",

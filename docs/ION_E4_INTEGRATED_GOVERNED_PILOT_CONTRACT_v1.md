@@ -57,6 +57,11 @@ retrieval stack is built for the pilot path.
 - multi-pack routing
 - a pilot framework, service layer, repository, manager, registry or state machine
 
+> Amended 2026-09-29 by **E4-A1** (`docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md`).
+> - "Conversation memory" above now means conversation memory *beyond* the bounded in-session context of OD22-08-A1.
+> - Persistent session storage, `DialogueState`, persistent personalization and cross-session memory remain excluded.
+> - The original list above is kept unchanged.
+
 ---
 
 ## 2. Integrated execution path

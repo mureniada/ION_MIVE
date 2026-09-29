@@ -39,9 +39,11 @@ from typing import Any, NoReturn, Sequence
 
 from .models import (
     QUESTION_NORMALIZATION_STRIP,
+    ConversationContextBinding,
     ExecutionProfileBinding,
     GovernedEvidenceBinding,
     ModelExecutionBinding,
+    PriorTurnBinding,
     TurnClosureState,
     TurnConfigurationBinding,
     TurnFailure,
@@ -176,6 +178,60 @@ def _normalized_question(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# conversation context: bound verbatim (TR-A1)
+# --------------------------------------------------------------------------- #
+def _bind_conversation_context(
+    conversation_context: Any, retrieval_query: Any
+) -> ConversationContextBinding | None:
+    """Bind the context a turn ran with, verbatim, or record its absence.
+
+    Read STRUCTURALLY (`context_contract_id`, `context_version`,
+    `context_sha256`, `prior_turns`, and each turn's `turn_id`, `question`,
+    `interpretation`, `uncertainty`). The canonical hash is carried verbatim:
+    it was recomputed and verified when the `ConversationContext` itself was
+    constructed, and this package keeps its fixed import boundary (no
+    hashing or serialization library here). `retrieval_query` is required
+    exactly when a context is present.
+    """
+    if conversation_context is None:
+        if retrieval_query is not None:
+            _fail("retrieval_query is recorded only for a turn with conversation context")
+        return None
+    what = "conversation context"
+    prior_turns = tuple(
+        PriorTurnBinding(
+            turn_id=_text(_attr(turn, "turn_id", "prior turn"), "prior turn turn_id"),
+            question=_text(_attr(turn, "question", "prior turn"), "prior turn question"),
+            interpretation=_text(
+                _attr(turn, "interpretation", "prior turn"), "prior turn interpretation"
+            ),
+            uncertainty=tuple(
+                _text(item, "prior turn uncertainty item")
+                for item in _sequence(
+                    _attr(turn, "uncertainty", "prior turn"), "prior turn uncertainty"
+                )
+            ),
+        )
+        for turn in _sequence(_attr(conversation_context, "prior_turns", what), f"{what} prior_turns")
+    )
+    if prior_turns == ():
+        _fail("a conversation context must carry at least one prior turn")
+    sha = _text(_attr(conversation_context, "context_sha256", what), f"{what} context_sha256")
+    return ConversationContextBinding(
+        context_contract_id=_text(
+            _attr(conversation_context, "context_contract_id", what),
+            f"{what} context_contract_id",
+        ),
+        context_version=_text(
+            _attr(conversation_context, "context_version", what), f"{what} context_version"
+        ),
+        context_sha256=sha,
+        retrieval_query=_text(retrieval_query, "retrieval_query"),
+        prior_turns=prior_turns,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # governed basis: bound by reference, never copied
 # --------------------------------------------------------------------------- #
 def _bind_governed_evidence(governed_basis: Any) -> GovernedEvidenceBinding:
@@ -256,6 +312,8 @@ def materialize_turn_record(
     comparison_latency_ms: float | None = None,
     pipeline_latency_ms: float,
     execution_profile: ExecutionProfileBinding | None = None,
+    conversation_context: Any | None = None,
+    retrieval_query: str | None = None,
 ) -> TurnRecord:
     """Materialize the record of one COMPLETED turn.
 
@@ -283,6 +341,9 @@ def materialize_turn_record(
     other) can bypass that law. `execution_profile` is likewise optional:
     `None` means the caller did not supply a policy-identity binding, the
     same comparison-applicable shape this function has always produced.
+
+    `conversation_context` and `retrieval_query` (TR-A1) are supplied together
+    for a turn that ran with prior-turn context, and both omitted otherwise.
 
     Raises `TurnRecordMaterializationError` on every contract violation.
     """
@@ -347,6 +408,9 @@ def materialize_turn_record(
         execution_profile=execution_profile,
         configuration=configuration,
         failure=None,
+        conversation_context=_bind_conversation_context(
+            conversation_context, retrieval_query
+        ),
     )
 
 
@@ -366,6 +430,8 @@ def materialize_failed_turn_record(
     comparison_latency_ms: float | None = None,
     pipeline_latency_ms: float | None = None,
     execution_profile: ExecutionProfileBinding | None = None,
+    conversation_context: Any | None = None,
+    retrieval_query: str | None = None,
 ) -> TurnRecord:
     """Materialize the record of one FAILED turn.
 
@@ -395,6 +461,10 @@ def materialize_failed_turn_record(
     REQUIRED here, because a failure during profile resolution itself — before
     any turn-like object exists to close — has no binding to supply and is
     outside this function's contract entirely.
+
+    `conversation_context` and `retrieval_query` (TR-A1) are NOT
+    stage-dependent: the context a turn runs with is fixed before retrieval,
+    so a failed follow-up turn still records exactly what it was given.
 
     This function neither takes a timestamp nor decides what failed: like its
     COMPLETED counterpart it records facts the caller already observed, and it
@@ -452,4 +522,7 @@ def materialize_failed_turn_record(
         execution_profile=_execution_profile(execution_profile),
         configuration=configuration,
         failure=failure,
+        conversation_context=_bind_conversation_context(
+            conversation_context, retrieval_query
+        ),
     )

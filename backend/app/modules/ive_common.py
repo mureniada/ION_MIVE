@@ -140,10 +140,47 @@ class _PromptItem:
     content: str
 
 
-def _render_user_prompt(*, question: str, items: list[_PromptItem]) -> str:
+PRIOR_CONVERSATION_HEADER = "PRIOR CONVERSATION (NOT EVIDENCE):"
+PRIOR_CONVERSATION_PREAMBLE = (
+    "These are earlier turns of this conversation, shown only so you can "
+    "understand what the QUESTION refers to. They are not context documents and "
+    "not evidence. Do not cite them, do not treat their content as established "
+    "fact, and do not repeat a claim from them unless a CONTEXT DOCUMENT below "
+    "supports it."
+)
+
+
+def _prior_conversation_lines(conversation_memory) -> list[str]:
+    """The labelled PRIOR CONVERSATION block (MC-A1), or nothing at all.
+
+    Read structurally (`turns`, each with `question`, `interpretation`,
+    `uncertainty`). It deliberately uses no square brackets, so nothing in it
+    resembles a bracketed document_id the model could cite.
+    """
+    if conversation_memory is None:
+        return []
+    lines = [PRIOR_CONVERSATION_HEADER, PRIOR_CONVERSATION_PREAMBLE]
+    for index, turn in enumerate(conversation_memory.turns, start=1):
+        lines.append(f"Prior turn {index}:")
+        lines.append(f"User question: {turn.question}")
+        lines.append(f"Interpretation given: {turn.interpretation}")
+        lines.append(f"Uncertainty noted: {'; '.join(turn.uncertainty) or 'none'}")
+    lines.append("")
+    return lines
+
+
+def _render_user_prompt(
+    *, question: str, items: list[_PromptItem], conversation_memory=None
+) -> str:
     """THE single prompt-formatting implementation. Same question and items ->
-    same prompt, byte for byte, regardless of which builder below called it."""
-    lines = [f"QUESTION:\n{question}", "", "CONTEXT DOCUMENTS:"]
+    same prompt, byte for byte, regardless of which builder below called it.
+
+    With no `conversation_memory` the output is byte-identical to the v0.1
+    prompt; with one, the PRIOR CONVERSATION block sits between the question
+    and the documents."""
+    lines = [f"QUESTION:\n{question}", ""]
+    lines.extend(_prior_conversation_lines(conversation_memory))
+    lines.append("CONTEXT DOCUMENTS:")
     for item in items:
         page = "" if item.page is None else f" (page {item.page})"
         lines.append(f"[{item.id}] {item.title}{page} — source: {item.source}")
@@ -167,7 +204,11 @@ def build_model_input_prompt(model_input: "ModelContextAssembly") -> str:
         )
         for item in model_input.evidence
     ]
-    return _render_user_prompt(question=model_input.question, items=items)
+    return _render_user_prompt(
+        question=model_input.question,
+        items=items,
+        conversation_memory=getattr(model_input, "conversation_memory", None),
+    )
 
 
 def build_user_prompt(pack: ContextPack) -> str:

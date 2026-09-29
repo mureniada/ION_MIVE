@@ -45,6 +45,8 @@ from .models import (
     DISPOSITION_ADMITTED,
     QUESTION_NORMALIZATION_STRIP,
     CandidateContentProjection,
+    ConversationMemorySegment,
+    ConversationMemoryTurn,
     EvidenceContextItem,
     ModelContextAssembly,
     ModelContextBuildError,
@@ -138,6 +140,50 @@ def _coverage_state(
     return ModelContextCoverageState.PARTIAL
 
 
+def _conversation_memory(conversation_context: Any) -> ConversationMemorySegment | None:
+    """Project a bounded Conversation Context into CONVERSATION_MEMORY (MC-A1).
+
+    Read STRUCTURALLY (`context_sha256`, `prior_turns`, and each turn's
+    `question`, `interpretation`, `uncertainty`), so this module keeps its
+    standard-library-only import boundary. Values are copied verbatim — the
+    caps were already enforced where the context was built. A prior turn's
+    `turn_id` is deliberately NOT carried: nothing in this segment may look
+    like an identity the model could cite.
+    """
+    if conversation_context is None:
+        return None
+    sha = _identity(
+        _attr(conversation_context, "context_sha256", "conversation context"),
+        "conversation context context_sha256",
+    )
+    prior_turns = _sequence(
+        _attr(conversation_context, "prior_turns", "conversation context"),
+        "conversation context prior_turns",
+    )
+    if prior_turns == ():
+        _fail("a conversation context must carry at least one prior turn")
+    turns: list[ConversationMemoryTurn] = []
+    for turn in prior_turns:
+        uncertainty = _sequence(
+            _attr(turn, "uncertainty", "prior turn"), "prior turn uncertainty"
+        )
+        turns.append(
+            ConversationMemoryTurn(
+                question=_identity(
+                    _attr(turn, "question", "prior turn"), "prior turn question"
+                ),
+                interpretation=_identity(
+                    _attr(turn, "interpretation", "prior turn"),
+                    "prior turn interpretation",
+                ),
+                uncertainty=tuple(
+                    _identity(item, "prior turn uncertainty item") for item in uncertainty
+                ),
+            )
+        )
+    return ConversationMemorySegment(context_sha256=sha, turns=tuple(turns))
+
+
 # --------------------------------------------------------------------------- #
 # assembly
 # --------------------------------------------------------------------------- #
@@ -146,6 +192,7 @@ def build_model_context(
     governed_basis: Any,
     candidate_projections: Sequence[CandidateContentProjection],
     question: str,
+    conversation_context: Any = None,
 ) -> ModelContextAssembly:
     """Assemble the Model Context for one turn from an already-governed basis.
 
@@ -159,6 +206,11 @@ def build_model_context(
     the result and are never labelled.
 
     `question` is the already-normalized user question, carried verbatim.
+
+    `conversation_context` (MC-A1) is `None` for a turn with no prior-turn
+    context — the assembly is then exactly the v0.1 shape — or a bounded
+    Conversation Context, projected into the separate CONVERSATION_MEMORY
+    segment. It never touches `evidence` or `coverage`.
 
     Raises `ModelContextBuildError` on every contract violation.
     """
@@ -286,4 +338,5 @@ def build_model_context(
         context_pack_id=context_pack_id,
         evidence=tuple(evidence),
         coverage=coverage,
+        conversation_memory=_conversation_memory(conversation_context),
     )

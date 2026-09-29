@@ -687,8 +687,14 @@ def _assert_rejected_before_any_execution(observed):
 
 
 def test_core_ask_signature_gains_only_keyword_only_response_depth():
+    # Amended by the Phase 2 amendment (RQ-A1 / MC-A1,
+    # docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md): one more
+    # keyword-only parameter, `conversation_context`, defaulting to None.
     params = inspect.signature(orch.Core.ask).parameters
-    assert list(params) == ["self", "question", "top_k", "progress", "on_turn_record", "response_depth"]
+    assert list(params) == [
+        "self", "question", "top_k", "progress", "on_turn_record", "response_depth",
+        "conversation_context",
+    ]
     shape = {name: (p.kind, p.default) for name, p in params.items() if name != "self"}
     assert shape == {
         "question": (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.empty),
@@ -696,6 +702,7 @@ def test_core_ask_signature_gains_only_keyword_only_response_depth():
         "progress": (inspect.Parameter.KEYWORD_ONLY, None),
         "on_turn_record": (inspect.Parameter.KEYWORD_ONLY, None),
         "response_depth": (inspect.Parameter.KEYWORD_ONLY, None),
+        "conversation_context": (inspect.Parameter.KEYWORD_ONLY, None),
     }
 
 
