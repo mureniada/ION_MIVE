@@ -8,11 +8,17 @@ public response fields. Run: streamlit run app.py
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import streamlit as st
 
 import pilot_client as pc
 
 LOADING_TEXT = "Considering the evidence…"
+WELCOME_TEXT = "Ask a question in your own words, or begin with the one below."
+BASE_QUESTIONS_PATH = Path(__file__).resolve().parent / "base_questions.json"
+HANDOFF_QUERY_PARAM = "q"
 SAFE_ERROR_TEXT = "Voice of Emergence could not complete this request. Please try again."
 CLARIFY_TEXT = (
     "Could you say a bit more about what you're asking? "
@@ -50,9 +56,33 @@ def _init_state() -> None:
     st.session_state.setdefault("request_in_flight", False)
     st.session_state.setdefault("last_error", None)
     st.session_state.setdefault("pending_question", None)
+    st.session_state.setdefault("url_handoff_consumed", False)
+
+
+def _load_base_questions() -> dict[str, str]:
+    """Allowlisted starter questions, id -> text, in file order.
+
+    Surface copy only. A missing or malformed file yields no starters rather
+    than breaking the chat.
+    """
+    try:
+        raw = json.loads(BASE_QUESTIONS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, list):
+        return {}
+    questions: dict[str, str] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        qid, text = item.get("id"), item.get("text")
+        if isinstance(qid, str) and qid and isinstance(text, str) and text.strip():
+            questions.setdefault(qid, text.strip())
+    return questions
 
 
 _init_state()
+BASE_QUESTIONS = _load_base_questions()
 
 try:
     _CLIENT = pc.PilotClient()
@@ -151,6 +181,34 @@ def _process_turn(question: str) -> None:
         })
 
 
+def _submit(question: str) -> None:
+    """The one submit path shared by typed input, starter buttons and URL handoff."""
+    st.session_state.messages.append({"role": "user", "kind": "user", "content": question})
+    st.session_state.pending_question = question
+    st.session_state.request_in_flight = True
+    st.rerun()
+
+
+def _consume_url_handoff() -> None:
+    """Auto-submit an allowlisted ?q=<id> once, then clear the parameter.
+
+    Only ids from base_questions.json are honoured; the submitted text always
+    comes from that file, never from the URL. Unknown ids are dropped.
+    """
+    if HANDOFF_QUERY_PARAM not in st.query_params:
+        return
+    question_id = st.query_params.get(HANDOFF_QUERY_PARAM)
+    del st.query_params[HANDOFF_QUERY_PARAM]
+    if st.session_state.url_handoff_consumed:
+        return
+    st.session_state.url_handoff_consumed = True
+    question = BASE_QUESTIONS.get(question_id)
+    if question and not st.session_state.messages and not st.session_state.request_in_flight:
+        _submit(question)
+
+
+_consume_url_handoff()
+
 title_col, action_col = st.columns([5, 1])
 with title_col:
     st.title("Voice of Emergence")
@@ -158,16 +216,19 @@ with action_col:
     if st.button("New conversation", disabled=st.session_state.request_in_flight):
         _new_conversation()
 
+if not st.session_state.messages and not st.session_state.request_in_flight:
+    st.write(WELCOME_TEXT)
+    for question_id, question in BASE_QUESTIONS.items():
+        if st.button(question, key=f"starter-{question_id}"):
+            _submit(question)
+
 for msg in st.session_state.messages:
     _render_message(msg)
 
 prompt = st.chat_input("Ask a question", disabled=st.session_state.request_in_flight)
 
 if prompt and not st.session_state.request_in_flight:
-    st.session_state.messages.append({"role": "user", "kind": "user", "content": prompt})
-    st.session_state.pending_question = prompt
-    st.session_state.request_in_flight = True
-    st.rerun()
+    _submit(prompt)
 
 if st.session_state.request_in_flight and st.session_state.pending_question:
     with st.chat_message("assistant"):
