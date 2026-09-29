@@ -1007,7 +1007,11 @@ def test_g7_presentation_is_absent_when_composition_was_not_attempted(monkeypatc
 def test_g7_presentation_discloses_only_the_composition_status(monkeypatch, status, expected):
     _patch_gate(monkeypatch)
     result = _attempted_core(status).ask("what is money?", top_k=1)
-    assert result.rendered["presentation"] == {"composition_status": expected}
+    # Composer v0.2: presentation also carries suggested_questions — [] here,
+    # because this stub composer returns none (and FALLBACK always gives []).
+    assert result.rendered["presentation"] == {
+        "composition_status": expected, "suggested_questions": [],
+    }
 
 
 def test_g7_composed_disclaimer_is_the_approved_wording(monkeypatch):

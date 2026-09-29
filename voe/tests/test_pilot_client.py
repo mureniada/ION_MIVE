@@ -322,9 +322,11 @@ class BackwardCompatibilityAndBoundaryTests(unittest.TestCase):
 
     def test_17_answer_turn_carries_no_operational_field_or_value(self):
         outcome = _TurnParsing.run(_composed_backend_body())
+        # + suggested_questions (composer v0.2): navigation only, not operational.
         self.assertEqual(
             set(outcome.__dataclass_fields__),
-            {"primary_answer", "disclaimer", "evidence", "uncertainty", "presentation_status"},
+            {"primary_answer", "disclaimer", "evidence", "uncertainty", "presentation_status",
+             "suggested_questions"},
         )
         self.assertEqual(outcome.uncertainty, ("Historical origin is debated.",))
         self.assertEqual(outcome.presentation_status, "COMPOSED")

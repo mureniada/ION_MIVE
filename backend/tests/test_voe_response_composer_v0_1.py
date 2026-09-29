@@ -332,7 +332,10 @@ def test_composer_uses_its_own_schema_not_ive_response_schema():
     from app.modules.ive_common import IVE_RESPONSE_SCHEMA
 
     assert COMPOSER_RESPONSE_SCHEMA != IVE_RESPONSE_SCHEMA
-    assert set(COMPOSER_RESPONSE_SCHEMA["properties"]) == {"composed_text"}
+    # Amended by composer contract v0.2: one OPTIONAL property added.
+    assert set(COMPOSER_RESPONSE_SCHEMA["properties"]) == {"composed_text", "suggested_questions"}
+    assert COMPOSER_RESPONSE_SCHEMA["required"] == ["composed_text"]
+    assert COMPOSER_RESPONSE_SCHEMA["additionalProperties"] is False
 
 
 # --------------------------------------------------------------------- #
@@ -613,9 +616,12 @@ def test_composer_construction_rejects_a_backend_without_generate():
 # 19 / 20: no citation/reference/telemetry surface on ComposedResponse itself
 # --------------------------------------------------------------------- #
 def test_composed_response_field_set_still_has_no_citation_or_telemetry_field():
+    # Amended by composer contract v0.2: + `suggested_questions`
+    # (presentation/navigation only; not a citation or telemetry field).
     field_names = {f.name for f in dataclasses.fields(ComposedResponse)}
     assert field_names == {
         "composed_text",
+        "suggested_questions",
         "response_composer_contract_id",
         "response_composer_version",
     }

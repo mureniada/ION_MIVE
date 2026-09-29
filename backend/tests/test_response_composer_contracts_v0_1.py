@@ -220,9 +220,12 @@ def test_composer_claim_view_rejects_an_unexpected_evidence_id_kwarg():
 # 6: ComposedResponse minimum output surface only
 # --------------------------------------------------------------------- #
 def test_composed_response_field_set_is_the_minimum_gate_1_surface():
+    # Amended by composer contract v0.2: + `suggested_questions`
+    # (presentation/navigation only; not a citation or telemetry field).
     field_names = {f.name for f in dataclasses.fields(ComposedResponse)}
     assert field_names == {
         "composed_text",
+        "suggested_questions",
         "response_composer_contract_id",
         "response_composer_version",
     }

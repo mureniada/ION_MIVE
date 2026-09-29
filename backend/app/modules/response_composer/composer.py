@@ -53,6 +53,7 @@ inheriting from it; this module does not import that Protocol.
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from .models import (
@@ -196,16 +197,93 @@ def build_composer_user_payload(composer_input: ComposerInput) -> str:
 # Deliberately NOT `IVE_RESPONSE_SCHEMA` — a distinct, minimal schema owned
 # by this module, naming nothing this Gate defers: no citation/reference
 # list, no evidence list, no telemetry, no provider provenance field.
+#
+# v0.2: one OPTIONAL property, `suggested_questions`. Its rules travel in the
+# schema description only — the system instruction above is unchanged, byte
+# for byte — and are ENFORCED after the call by `filter_suggested_questions`,
+# never trusted from the model.
+SUGGESTED_QUESTIONS_DESCRIPTION = (
+    "Optional: 2 to 3 short, natural follow-up questions the person might ask "
+    "next, based only on the question and the interpretation you were given. "
+    "Each must be a single question ending in one question mark. Questions "
+    "only: make no factual claims, and include no citations, document ids, "
+    "links or references."
+)
+
 COMPOSER_RESPONSE_SCHEMA: dict = {
     "type": "object",
     "additionalProperties": False,
     "required": ["composed_text"],
     "properties": {
         "composed_text": {"type": "string"},
+        "suggested_questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": SUGGESTED_QUESTIONS_DESCRIPTION,
+        },
     },
 }
 
-_ALLOWED_OUTPUT_KEYS = frozenset({"composed_text"})
+_ALLOWED_OUTPUT_KEYS = frozenset({"composed_text", "suggested_questions"})
+
+# Deterministic suggested-question filter (v0.2).
+SUGGESTION_MIN_CHARS = 8
+SUGGESTION_MAX_CHARS = 120
+MAX_SUGGESTIONS = 3
+MIN_SUGGESTIONS = 2
+_FORBIDDEN_SUGGESTION_TOKENS = ("[", "]", "::", "http", "www.")
+# Citation-like DOI only: the standalone word "doi", "doi:", "doi.org" (and so
+# "https://doi.org"), case-insensitive. Ordinary words that merely contain the
+# letters ("doing", "undoing", "avoid") are NOT rejected.
+_DOI_CITATION = re.compile(r"\bdoi\b|doi:|doi\.org", re.IGNORECASE)
+
+
+def _question_key(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def filter_suggested_questions(raw: object, current_question: str) -> tuple[str, ...]:
+    """Keep only well-formed next questions; never raises.
+
+    Accepts only items that are strings; trim to 8..120 characters; contain
+    exactly one "?" and end with it; contain no newline; contain none of
+    "[", "]", "::", "http", "www." (case-insensitive) and no citation-like DOI
+    (standalone word "doi", "doi:", "doi.org"); differ from the
+    current question (case/whitespace-insensitive); and are unique
+    (case/whitespace-insensitive, first kept). The first 3 valid items are
+    kept; fewer than 2 valid items yields none. Anything that is not a list
+    yields none. Presentation only — the result is never evidence.
+    """
+    if not isinstance(raw, list):
+        return ()
+    current = _question_key(current_question) if isinstance(current_question, str) else ""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not SUGGESTION_MIN_CHARS <= len(text) <= SUGGESTION_MAX_CHARS:
+            continue
+        if text.count("?") != 1 or not text.endswith("?"):
+            continue
+        if "\n" in text or "\r" in text:
+            continue
+        lowered = text.casefold()
+        if any(token in lowered for token in _FORBIDDEN_SUGGESTION_TOKENS):
+            continue
+        if _DOI_CITATION.search(text):
+            continue
+        key = _question_key(text)
+        if key == current or key in seen:
+            continue
+        seen.add(key)
+        kept.append(text)
+        if len(kept) == MAX_SUGGESTIONS:
+            break
+    if len(kept) < MIN_SUGGESTIONS:
+        return ()
+    return tuple(kept)
 
 
 # --------------------------------------------------------------------- #
@@ -314,8 +392,17 @@ class VOEResponseComposer:
                 f"found {composed_text!r}"
             )
 
+        # v0.2: suggestions are optional and isolated. Whatever the model put
+        # there (absent, null, wrong type, bad items) can only reduce them to
+        # none — it can never invalidate an otherwise valid composed_text.
+        suggested_questions = filter_suggested_questions(
+            raw.get("suggested_questions"), composer_input.question
+        )
+
         try:
-            response = ComposedResponse(composed_text=composed_text)
+            response = ComposedResponse(
+                composed_text=composed_text, suggested_questions=suggested_questions
+            )
         except ComposerContractError as exc:
             raise ResponseComposerOutputError(str(exc)) from exc
 

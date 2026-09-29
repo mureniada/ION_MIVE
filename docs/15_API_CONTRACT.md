@@ -103,7 +103,16 @@ above as follows. When it is not attempted (VOE disabled), the response is
 exactly the renderer's output, byte for byte, and none of these keys exist.
 
 - `presentation` (new top-level key):
-  `{ "composition_status": "COMPOSED" | "FALLBACK" }`.
+  `{ "composition_status": "COMPOSED" | "FALLBACK", "suggested_questions": ["string", ...] }`.
+  - `suggested_questions` (composer contract v0.2) holds 0, or 2–3, suggested next
+    questions. They come from the same single composer call and are deterministically
+    filtered: each is a question ending in one `?`, 8–120 characters, with no links,
+    citations or ids.
+  - The list is always `[]` on `FALLBACK`.
+  - They are presentation and navigation only. They are **not** evidence, not
+    conversation memory, and not retrieval input.
+  - A suggestion becomes a turn only if the user submits it as an ordinary question.
+  - Clients must treat the field as optional.
 - `primary_answer`: on `COMPOSED`, the composer's restyled text; on
   `FALLBACK`, the renderer's deterministic answer, unchanged.
 - `disclaimer`: on `COMPOSED`, replaced by a disclaimer stating that the

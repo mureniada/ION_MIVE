@@ -65,6 +65,9 @@ class AnswerTurn:
     # `presentation.composition_status` ("COMPOSED" / "FALLBACK"); None when
     # the backend did not attempt VOE composition or sent anything else.
     presentation_status: str | None = None
+    # `presentation.suggested_questions`: at most 3 non-empty strings the user
+    # MAY click; () when missing or malformed. Navigation only.
+    suggested_questions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,21 @@ def _normalize_presentation_status(raw) -> str | None:
         return None
     status = raw.get("composition_status")
     return status if isinstance(status, str) and status in _PRESENTATION_STATUSES else None
+
+
+_MAX_SUGGESTED_QUESTIONS = 3
+
+
+def _normalize_suggested_questions(raw) -> tuple[str, ...]:
+    """`presentation.suggested_questions`, defensively: a list of non-empty
+    strings, at most 3; anything missing or malformed yields ()."""
+    if not isinstance(raw, dict):
+        return ()
+    items = raw.get("suggested_questions")
+    if not isinstance(items, list):
+        return ()
+    kept = [item.strip() for item in items if isinstance(item, str) and item.strip()]
+    return tuple(kept[:_MAX_SUGGESTED_QUESTIONS])
 
 
 class PilotClient:
@@ -174,6 +192,7 @@ class PilotClient:
                 evidence=_normalize_evidence(body.get("evidence")),
                 uncertainty=_normalize_uncertainty(body.get("uncertainty")),
                 presentation_status=_normalize_presentation_status(body.get("presentation")),
+                suggested_questions=_normalize_suggested_questions(body.get("presentation")),
             )
 
         raise PilotClientError("unrecognized turn response")

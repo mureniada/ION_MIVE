@@ -599,8 +599,16 @@ class Core:
                 # when composition was attempted. A fallback keeps the
                 # renderer's disclaimer: the text shown IS the single
                 # execution's own answer.
+                # Composer v0.2: the already-filtered suggested next questions
+                # ride here and ONLY here — presentation/navigation, never
+                # primary_answer, uncertainty, evidence, the Turn Record, the
+                # Model Context or conversation memory. FALLBACK exposes none.
                 final_rendered["presentation"] = {
-                    "composition_status": "COMPOSED" if composed else "FALLBACK"
+                    "composition_status": "COMPOSED" if composed else "FALLBACK",
+                    "suggested_questions": (
+                        list(composition_result.response.suggested_questions)
+                        if composed else []
+                    ),
                 }
                 if composed:
                     final_rendered["disclaimer"] = _COMPOSED_DISCLAIMER_TEMPLATE.format(

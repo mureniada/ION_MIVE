@@ -178,7 +178,24 @@ def _process_turn(question: str) -> None:
             "evidence": list(outcome.evidence),
             "uncertainty": list(outcome.uncertainty),
             "presentation_status": outcome.presentation_status,
+            "suggested_questions": list(outcome.suggested_questions),
         })
+
+
+def _render_latest_suggestions() -> None:
+    """Suggested next questions under the LATEST answer only, and only while
+    no request is in flight. A click is an ordinary question: it goes through
+    the one `_submit` path, nothing else. Unclicked suggestions leave no state."""
+    messages = st.session_state.messages
+    if st.session_state.request_in_flight or not messages:
+        return
+    latest_index = len(messages) - 1
+    latest = messages[latest_index]
+    if latest.get("kind") != "answer":
+        return
+    for n, suggestion in enumerate(latest.get("suggested_questions") or []):
+        if st.button(suggestion, key=f"suggest-{latest_index}-{n}"):
+            _submit(suggestion)
 
 
 def _submit(question: str) -> None:
@@ -224,6 +241,8 @@ if not st.session_state.messages and not st.session_state.request_in_flight:
 
 for msg in st.session_state.messages:
     _render_message(msg)
+
+_render_latest_suggestions()
 
 prompt = st.chat_input("Ask a question", disabled=st.session_state.request_in_flight)
 

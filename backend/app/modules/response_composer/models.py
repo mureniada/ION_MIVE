@@ -65,8 +65,10 @@ from dataclasses import dataclass
 
 from ..voe_profile import VOERuntimeProfile
 
-RESPONSE_COMPOSER_CONTRACT_ID = "ION_RESPONSE_COMPOSER_V0_1"
-RESPONSE_COMPOSER_VERSION = "0.1"
+# v0.2: the composer output gained optional `suggested_questions`
+# (presentation/navigation only; never evidence, memory or retrieval input).
+RESPONSE_COMPOSER_CONTRACT_ID = "ION_RESPONSE_COMPOSER_V0_2"
+RESPONSE_COMPOSER_VERSION = "0.2"
 
 # A2-009A: the closed set of `ComposerInput.response_depth` values besides
 # None, validated here independently of any caller.
@@ -211,9 +213,15 @@ class ComposedResponse:
     gate), and a status/fallback flag (that classification belongs to the
     calling orchestrator once this type is actually wired, not to this inert
     Gate 1 contract).
+
+    v0.2: `suggested_questions` — 0, or 2 to 3, already-filtered next
+    questions the user MAY choose to ask. Presentation/navigation only: never
+    evidence, never conversation memory, never retrieval input unless a user
+    actually submits one as an ordinary question.
     """
 
     composed_text: str
+    suggested_questions: tuple[str, ...] = ()
     response_composer_contract_id: str = RESPONSE_COMPOSER_CONTRACT_ID
     response_composer_version: str = RESPONSE_COMPOSER_VERSION
 
@@ -221,6 +229,15 @@ class ComposedResponse:
         if not isinstance(self.composed_text, str) or not self.composed_text.strip():
             raise ComposerContractError(
                 f"composed_text must be a non-empty string, found {self.composed_text!r}"
+            )
+        if not isinstance(self.suggested_questions, tuple) or not all(
+            isinstance(q, str) and q for q in self.suggested_questions
+        ):
+            raise ComposerContractError("suggested_questions must be a tuple of non-empty strings")
+        if len(self.suggested_questions) not in (0, 2, 3):
+            raise ComposerContractError(
+                "suggested_questions must hold 0 or 2..3 items, found "
+                f"{len(self.suggested_questions)}"
             )
 
 
