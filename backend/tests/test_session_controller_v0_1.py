@@ -693,10 +693,13 @@ def test_19_to_22_private_state_carries_no_forbidden_content(monkeypatch):
     # PriorTurnContext values (question, IVE abstract, IVE uncertainty).
     from app.modules.conversation_context import MAX_PRIOR_TURNS, PriorTurnContext
 
+    # RQ-A1-R1 adds the private `root_question` (the first COMPLETED question).
     assert state_attr_names == {
         "session_id", "created_at", "status", "next_turn_ordinal",
-        "active_reservation", "entries", "context_window", "turn_lock", "guard",
+        "active_reservation", "entries", "context_window", "root_question",
+        "turn_lock", "guard",
     }
+    assert state.root_question == "Question"
     assert state.context_window.maxlen == MAX_PRIOR_TURNS
     for prior in state.context_window:
         assert isinstance(prior, PriorTurnContext)

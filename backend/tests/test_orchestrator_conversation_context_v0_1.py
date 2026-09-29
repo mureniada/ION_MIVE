@@ -89,8 +89,10 @@ def ctx_core(monkeypatch, reports, *, retrieval=None):
     return core, engine
 
 
-def context_of(*turns):
-    return build_conversation_context(tuple(turns))
+def context_of(*turns, root_question=None):
+    """Default root: the oldest given turn's question (as if it were the root)."""
+    root = turns[0].question if root_question is None else root_question
+    return build_conversation_context(tuple(turns), root_question=root)
 
 
 PRIOR = PriorTurnContext(
@@ -108,13 +110,25 @@ def test_no_context_retrieval_query_is_the_question_itself(monkeypatch):
     assert core._retrieval.queries == ["Question"]
 
 
-def test_context_retrieval_query_is_prior_user_question_then_current(monkeypatch):
+def test_context_retrieval_query_is_root_question_then_current(monkeypatch):
     core, _ = ctx_core(monkeypatch, [ive_report()])
     core.ask("Tell me more", 3, conversation_context=context_of(PRIOR))
     assert core._retrieval.queries == ["What is ION?\nTell me more"]
     # prior model text never reaches retrieval
     assert "PRIOR INTERPRETATION TEXT" not in core._retrieval.queries[0]
     assert "PRIOR UNCERTAINTY" not in core._retrieval.queries[0]
+
+
+def test_root_question_is_used_not_the_latest_prior_question(monkeypatch):
+    core, engine = ctx_core(monkeypatch, [ive_report()])
+    latest = PriorTurnContext(turn_id="T-3", question="How does that work in practice?",
+                              interpretation="LATEST INTERPRETATION", uncertainty=())
+    core.ask("What are the risks?", 3,
+             conversation_context=context_of(PRIOR, latest, root_question="ROOT QUESTION?"))
+    assert core._retrieval.queries == ["ROOT QUESTION?\nWhat are the risks?"]
+    # the root is navigation only: never shown to the model, never evidence
+    assert "ROOT QUESTION?" not in engine.prompts[0]
+    assert "ROOT QUESTION?" not in repr(engine.model_inputs[0])
 
 
 def test_invalid_context_type_fails_before_retrieval(monkeypatch):
@@ -218,7 +232,8 @@ def test_completed_context_turn_record_binds_context_verbatim(monkeypatch):
     assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_2"
     assert record.question == "Tell me more"
     assert binding.context_sha256 == ctx.context_sha256
-    assert binding.context_contract_id == "ION_CONVERSATION_CONTEXT_V0_1"
+    assert binding.context_contract_id == "ION_CONVERSATION_CONTEXT_V0_2"
+    assert binding.context_version == "0.2"
     assert binding.retrieval_query == "What is ION?\nTell me more"
     [prior] = binding.prior_turns
     assert (prior.turn_id, prior.question, prior.interpretation, prior.uncertainty) == (
@@ -255,8 +270,14 @@ def test_turn_is_reconstructable_byte_for_byte_from_its_record(monkeypatch):
         for t in record.conversation_context.prior_turns
     )
     assert context_sha256(rebuilt_turns) == record.conversation_context.context_sha256
+    # RQ-A1-R1: the root is recoverable exactly from the recorded retrieval query
+    recorded_query = record.conversation_context.retrieval_query
+    assert recorded_query.endswith("\n" + record.question)
+    rebuilt_root = recorded_query[: -len("\n" + record.question)]
+    assert rebuilt_root == "Q1"
     rebuilt_ctx = ConversationContext(
         prior_turns=rebuilt_turns,
+        root_question=rebuilt_root,
         context_sha256=record.conversation_context.context_sha256,
     )
     # same question + same admitted basis + rebuilt context -> identical prompt

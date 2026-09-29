@@ -1,4 +1,4 @@
-"""Bounded Conversation Context vocabulary (Phase 2, v0.1).
+"""Bounded Conversation Context vocabulary (Phase 2, v0.2).
 
 A `ConversationContext` is a PRODUCT object. It states which small, structured
 facts about the most recent COMPLETED turns of ONE session may be shown to the
@@ -19,6 +19,12 @@ AMENDMENT_v1.md):
   VOE-composed or rendered text;
 - its IVE report `uncertainty` items.
 
+A context additionally carries the session's `root_question` (RQ-A1-R1): the
+normalized, capped user question of the session's FIRST COMPLETED turn. It is
+user-authored retrieval navigation only — it anchors the follow-up retrieval
+query, is not shown to the model, is not part of `context_sha256` (which
+binds `prior_turns`), and never enters evidence.
+
 There is deliberately no field for evidence identities, evidence content,
 claims, relations, confidence, composed text, a rendered answer, a dialogue
 instruction or any session identity. Every limit below is fixed (D6) and is
@@ -33,8 +39,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-CONVERSATION_CONTEXT_CONTRACT_ID = "ION_CONVERSATION_CONTEXT_V0_1"
-CONVERSATION_CONTEXT_VERSION = "0.1"
+# v0.2 (RQ-A1-R1): the required `root_question` field was added; the schema
+# is no longer v0.1's. context_sha256 semantics are unchanged (prior_turns only).
+CONVERSATION_CONTEXT_CONTRACT_ID = "ION_CONVERSATION_CONTEXT_V0_2"
+CONVERSATION_CONTEXT_VERSION = "0.2"
 
 MAX_PRIOR_TURNS = 2
 QUESTION_CHAR_CAP = 500
@@ -138,10 +146,14 @@ class ConversationContext:
 
     prior_turns: tuple[PriorTurnContext, ...]
     context_sha256: str
+    # RQ-A1-R1: the session's first COMPLETED user question, capped. Retrieval
+    # navigation only; never shown to the model; not part of context_sha256.
+    root_question: str
     context_contract_id: str = CONVERSATION_CONTEXT_CONTRACT_ID
     context_version: str = CONVERSATION_CONTEXT_VERSION
 
     def __post_init__(self) -> None:
+        _capped_text(self.root_question, QUESTION_CHAR_CAP, "root_question", allow_empty=False)
         if not isinstance(self.prior_turns, tuple):
             _fail(
                 "prior_turns must be a tuple, found "

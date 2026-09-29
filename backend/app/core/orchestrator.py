@@ -333,8 +333,9 @@ class Core:
                     "conversation_context must be None or a ConversationContext.",
                     stage=errors.STAGE_CONFIGURATION,
                 )
-            # RQ-A1: with context, the most recent prior USER question, a
-            # newline, then this question; without context, `q` itself — the
+            # RQ-A1 (revised RQ-A1-R1): with context, the session's ROOT user
+            # question (first COMPLETED turn, capped), a newline, then this
+            # question; without context, `q` itself — the
             # identical object retrieval has always received. Prior model text
             # never reaches retrieval. The Context Pack, governance, the model
             # context question and the Turn Record question all stay `q`.

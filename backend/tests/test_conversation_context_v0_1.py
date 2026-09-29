@@ -33,6 +33,7 @@ from app.modules.conversation_context import (
     context_sha256,
     prior_turn_from_ask_result,
     retrieval_query_for,
+    root_question_for,
 )
 
 PACKAGE_DIR = Path(cc.__file__).resolve().parent
@@ -66,8 +67,9 @@ def test_d6_limits_are_exact():
     assert UNCERTAINTY_CHAR_CAP == 300
     assert TOTAL_CHAR_CAP == 4000
     assert TRUNCATION_MARK == "…"
-    assert cc.CONVERSATION_CONTEXT_CONTRACT_ID == "ION_CONVERSATION_CONTEXT_V0_1"
-    assert cc.CONVERSATION_CONTEXT_VERSION == "0.1"
+    # v0.2: root_question added (RQ-A1-R1)
+    assert cc.CONVERSATION_CONTEXT_CONTRACT_ID == "ION_CONVERSATION_CONTEXT_V0_2"
+    assert cc.CONVERSATION_CONTEXT_VERSION == "0.2"
 
 
 def test_prior_turn_has_exactly_four_facts_and_no_evidence_field():
@@ -75,7 +77,8 @@ def test_prior_turn_has_exactly_four_facts_and_no_evidence_field():
         "turn_id", "question", "interpretation", "uncertainty",
     }
     assert {f.name for f in dataclasses.fields(ConversationContext)} == {
-        "prior_turns", "context_sha256", "context_contract_id", "context_version",
+        "prior_turns", "context_sha256", "root_question",   # root: RQ-A1-R1
+        "context_contract_id", "context_version",
     }
     for cls in (PriorTurnContext, ConversationContext):
         for name in (f.name for f in dataclasses.fields(cls)):
@@ -145,17 +148,31 @@ def test_prior_turn_rejects_oversized_or_malformed_fields():
 
 def test_context_rejects_tampered_hash_too_many_turns_and_duplicates():
     one, two, three = _turn("T-1"), _turn("T-2"), _turn("T-3")
+    root = "Root question?"
     with pytest.raises(ConversationContextError):
-        ConversationContext(prior_turns=(one,), context_sha256="0" * 64)
+        ConversationContext(prior_turns=(one,), context_sha256="0" * 64, root_question=root)
     with pytest.raises(ConversationContextError):
         ConversationContext(
             prior_turns=(one, two, three),
-            context_sha256=context_sha256((one, two, three)),
+            context_sha256=context_sha256((one, two, three)), root_question=root,
         )
     with pytest.raises(ConversationContextError):
-        ConversationContext(prior_turns=(one, one), context_sha256=context_sha256((one, one)))
+        ConversationContext(prior_turns=(one, one), context_sha256=context_sha256((one, one)),
+                            root_question=root)
     with pytest.raises(ConversationContextError):
-        ConversationContext(prior_turns=(), context_sha256=context_sha256(()))
+        ConversationContext(prior_turns=(), context_sha256=context_sha256(()), root_question=root)
+
+
+def test_root_question_is_required_capped_and_outside_the_hash():
+    one = _turn("T-1")
+    sha = context_sha256((one,))
+    for bad in ("", "  padded  ", "q" * 501, None):
+        with pytest.raises(ConversationContextError):
+            ConversationContext(prior_turns=(one,), context_sha256=sha, root_question=bad)
+    a = ConversationContext(prior_turns=(one,), context_sha256=sha, root_question="Root A")
+    b = ConversationContext(prior_turns=(one,), context_sha256=sha, root_question="Root B")
+    assert a.context_sha256 == b.context_sha256          # hash binds prior_turns only
+    assert "Root A" not in canonical_context_bytes((one,)).decode("utf-8")
 
 
 def test_canonical_bytes_and_hash_are_stable_golden():
@@ -174,28 +191,33 @@ def test_canonical_bytes_and_hash_are_stable_golden():
 # --------------------------------------------------------------------- #
 # window -> context, bounded, no summarization
 # --------------------------------------------------------------------- #
-def test_empty_window_gives_no_context():
-    assert build_conversation_context(()) is None
+def test_empty_window_or_no_root_gives_no_context():
+    assert build_conversation_context((), root_question="Root?") is None
+    assert build_conversation_context((_turn("T-1"),), root_question=None) is None
 
 
 def test_total_cap_drops_the_oldest_turn_never_summarizes():
     big_a = _turn("T-1", "q" * 500, "a" * 1200, ("u" * 300,) * 3)   # 2600 chars
     big_b = _turn("T-2", "r" * 500, "b" * 1200, ("v" * 300,) * 3)   # 2600 chars
-    ctx = build_conversation_context((big_a, big_b))
+    ctx = build_conversation_context((big_a, big_b), root_question="Root?")
     assert ctx.prior_turns == (big_b,)       # 5200 > 4000: oldest dropped whole
     assert ctx.context_sha256 == context_sha256((big_b,))
 
     small_a, small_b = _turn("T-1"), _turn("T-2")
-    ctx = build_conversation_context((small_a, small_b))
+    ctx = build_conversation_context((small_a, small_b), root_question="Root?")
     assert ctx.prior_turns == (small_a, small_b)  # oldest first, both fit
 
 
-def test_retrieval_query_rule_is_exact():
+def test_retrieval_query_rule_is_root_anchored_rq_a1_r1():
     assert retrieval_query_for("Current?", None) == "Current?"
     q = "Current?"
     assert retrieval_query_for(q, None) is q
-    ctx = build_conversation_context((_turn("T-1", "First Q"), _turn("T-2", "Second Q")))
-    assert retrieval_query_for("Tell me more", ctx) == "Second Q\nTell me more"
+    ctx = build_conversation_context(
+        (_turn("T-2", "Second Q"), _turn("T-3", "Third Q")), root_question="First Q",
+    )
+    # the root is used even though it is no longer in the 2-turn window
+    assert retrieval_query_for("Tell me more", ctx) == "First Q\nTell me more"
+    assert root_question_for("  " + "q" * 900 + "  ") == "q" * 499 + TRUNCATION_MARK
 
 
 # --------------------------------------------------------------------- #

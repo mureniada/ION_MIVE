@@ -12,6 +12,7 @@ from .builder import (
     cap_text,
     prior_turn_from_ask_result,
     retrieval_query_for,
+    root_question_for,
 )
 from .models import (
     CONVERSATION_CONTEXT_CONTRACT_ID,
@@ -49,4 +50,5 @@ __all__ = [
     "context_sha256",
     "prior_turn_from_ask_result",
     "retrieval_query_for",
+    "root_question_for",
 ]

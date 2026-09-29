@@ -67,9 +67,12 @@ dialogue instruction — plus, under amendment OD22-08-A1
 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md), ONE bounded private
 `context_window`: at most the last two COMPLETED turns of this session, each
 reduced to exactly its question, its IVE abstract and its IVE uncertainty
-(`PriorTurnContext`). FAILED captures and CLARIFY outcomes never enter it; it
-is never persisted, never shared across sessions, and never exposed on the
-public `Session` snapshot. The Adaptive Dialogue engine still receives only
+(`PriorTurnContext`), and (RQ-A1-R1) one private `root_question`: the
+normalized, capped user question of the session's FIRST COMPLETED turn, used
+only to anchor follow-up retrieval. FAILED captures and CLARIFY outcomes
+never enter the window and never establish or replace the root; neither is
+ever persisted, shared across sessions, or exposed on the public `Session`
+snapshot. The Adaptive Dialogue engine still receives only
 the current normalized question (OD23-05/06 unchanged). Every value returned
 to a caller is a fresh, immutable `Session` snapshot built from the
 already-frozen models in `session/models.py` — there is no second public
@@ -96,6 +99,7 @@ from ..conversation_context import (
     PriorTurnContext,
     build_conversation_context,
     prior_turn_from_ask_result,
+    root_question_for,
 )
 from ..turn_record import TurnClosureState, TurnRecord
 from .models import (
@@ -179,8 +183,9 @@ class _SessionState:
 
     Holds exactly: identity, lifecycle status, the next ordinal, the current
     reservation (if any), an append-only list of `SessionTurnEntry`
-    REFERENCES, and (OD22-08-A1) a bounded `context_window` of at most
-    `MAX_PRIOR_TURNS` `PriorTurnContext` values. Nothing else — no evidence,
+    REFERENCES, (OD22-08-A1) a bounded `context_window` of at most
+    `MAX_PRIOR_TURNS` `PriorTurnContext` values, and (RQ-A1-R1) the
+    `root_question` of the first COMPLETED turn. Nothing else — no evidence,
     no rendered text, no composed text, no dialogue instruction.
     """
 
@@ -194,6 +199,8 @@ class _SessionState:
         # OD22-08-A1: oldest first; appended only after a COMPLETED capture;
         # the deque's maxlen drops the oldest turn, nothing is summarized.
         self.context_window: deque[PriorTurnContext] = deque(maxlen=MAX_PRIOR_TURNS)
+        # RQ-A1-R1: set once, by the first COMPLETED turn; never replaced.
+        self.root_question: str | None = None
         # Held for the full duration of one run_turn() call, Core.ask()
         # included — see the module docstring for why two lock roles exist.
         self.turn_lock = threading.Lock()
@@ -359,7 +366,10 @@ class SessionController:
             # seam above, which never sees it.
             with state.guard:
                 window = tuple(state.context_window)
-            conversation_context = build_conversation_context(window)
+                root_question = state.root_question
+            conversation_context = build_conversation_context(
+                window, root_question=root_question
+            )
             context_kwargs = (
                 {} if conversation_context is None
                 else {"conversation_context": conversation_context}
@@ -445,7 +455,15 @@ class SessionController:
         uncertainty) — never the composed or rendered answer and never any
         evidence. A turn that cannot be remembered is simply not remembered;
         it never fails the turn that already completed.
+
+        RQ-A1-R1: the FIRST COMPLETED turn of the session establishes the
+        session's `root_question` (its normalized question, capped). It is
+        set once and never replaced; FAILED and CLARIFY outcomes never reach
+        this method, so they can neither establish nor replace it.
         """
+        with state.guard:
+            if state.root_question is None:
+                state.root_question = root_question_for(question)
         try:
             prior = prior_turn_from_ask_result(
                 turn_id=turn_id, question=question, ask_result=result

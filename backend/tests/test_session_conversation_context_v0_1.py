@@ -67,6 +67,119 @@ def test_follow_up_turn_carries_the_prior_turn_context(monkeypatch):
     assert "PRIOR CONVERSATION" not in engine.prompts[0]
 
 
+# --------------------------------------------------------------------- #
+# RQ-A1-R1: root-anchored follow-up retrieval
+# --------------------------------------------------------------------- #
+Q1 = "What is ION and how does it work?"
+Q2 = "Tell me more."
+Q3 = "How does that work in practice?"
+Q4 = "What are the risks?"
+
+
+def test_four_turn_sequence_is_root_anchored(monkeypatch):
+    reports = [ive_report(abstract=f"ASSISTANT-TEXT-T{i}", uncertainty=(f"ASSISTANT-UNC-T{i}",))
+               for i in range(1, 5)]
+    controller, core, engine, _ = controller_for(monkeypatch, reports)
+    session = controller.create_session().session_id
+    for question in (Q1, Q2, Q3, Q4):
+        controller.run_turn(session, question, top_k=3)
+
+    assert core._retrieval.queries == [
+        Q1,                   # 1. T1 = Q1
+        Q1 + "\n" + Q2,       # 2. T2 = Q1 + Q2
+        Q1 + "\n" + Q3,       # 3. T3 = Q1 + Q3
+        Q1 + "\n" + Q4,       # 4. T4 = Q1 + Q4 ...
+    ]
+    # ... even though Q1 has fallen out of the 2-turn context window at T4
+    assert [t.question for t in engine.model_inputs[3].conversation_memory.turns] == [Q2, Q3]
+    # 8. assistant/model text never enters retrieval
+    for query in core._retrieval.queries:
+        assert "ASSISTANT-" not in query
+    # the exact retrieval query is recorded on every context turn
+    records = [e.turn_record for e in controller.get_session(session).ordered_turns]
+    assert records[0].conversation_context is None
+    assert [r.conversation_context.retrieval_query for r in records[1:]] == \
+        core._retrieval.queries[1:]
+    assert controller._sessions[session].root_question == Q1
+
+
+def test_root_is_isolated_per_session(monkeypatch):
+    controller, core, _, _ = controller_for(monkeypatch, [ive_report() for _ in range(4)])
+    a = controller.create_session().session_id
+    b = controller.create_session().session_id
+    controller.run_turn(a, "Root of A?", top_k=3)
+    controller.run_turn(b, "Root of B?", top_k=3)
+    controller.run_turn(a, "Follow-up A", top_k=3)
+    controller.run_turn(b, "Follow-up B", top_k=3)
+    assert core._retrieval.queries[2:] == ["Root of A?\nFollow-up A", "Root of B?\nFollow-up B"]
+
+
+def test_clarify_before_first_completed_turn_does_not_establish_a_root(monkeypatch):
+    controller, core, _, _ = controller_for(monkeypatch, [ive_report(), ive_report()])
+    session = controller.create_session().session_id
+    controller.run_turn(session, CLARIFY_Q, top_k=3)          # CLARIFY: no Core.ask
+    assert controller._sessions[session].root_question is None
+    controller.run_turn(session, "Actual first question", top_k=3)
+    controller.run_turn(session, "Tell me more", top_k=3)
+    assert core._retrieval.queries == [
+        "Actual first question", "Actual first question\nTell me more",
+    ]
+
+
+def test_failed_turn_before_first_completed_turn_does_not_establish_a_root(monkeypatch):
+    from app.core import errors as core_errors
+
+    class _FailingThenOk:
+        def __init__(self):
+            self.calls = 0
+
+        def retrieve(self, question, top_k):
+            from types import SimpleNamespace
+
+            self.calls += 1
+            self.queries.append(question)
+            if self.calls == 1:
+                raise core_errors.RetrievalError("controlled retrieval failure")
+            return [SimpleNamespace(document_id=c, content="body") for c in ("EV-1", "EV-2", "EV-3")]
+
+    retrieval = _FailingThenOk()
+    retrieval.queries = []
+    controller, core, _, _ = controller_for(
+        monkeypatch, [ive_report(), ive_report()], retrieval=retrieval,
+    )
+    session = controller.create_session().session_id
+    with pytest.raises(errors.IonError):
+        controller.run_turn(session, "Failed first question", top_k=3)
+    assert controller._sessions[session].root_question is None
+    controller.run_turn(session, "Completed first question", top_k=3)
+    controller.run_turn(session, "Tell me more", top_k=3)
+    assert retrieval.queries[-1] == "Completed first question\nTell me more"
+    assert controller._sessions[session].root_question == "Completed first question"
+
+
+def test_new_session_gets_a_new_root(monkeypatch):
+    controller, core, _, _ = controller_for(monkeypatch, [ive_report() for _ in range(4)])
+    first = controller.create_session().session_id
+    controller.run_turn(first, "Old root?", top_k=3)
+    controller.run_turn(first, "Old follow-up", top_k=3)
+    controller.close_session(first)
+    second = controller.create_session().session_id
+    controller.run_turn(second, "New root?", top_k=3)
+    controller.run_turn(second, "New follow-up", top_k=3)
+    assert core._retrieval.queries == [
+        "Old root?", "Old root?\nOld follow-up", "New root?", "New root?\nNew follow-up",
+    ]
+
+
+def test_root_is_capped_with_the_question_cap(monkeypatch):
+    controller, core, _, _ = controller_for(monkeypatch, [ive_report(), ive_report()])
+    session = controller.create_session().session_id
+    long_root = "r" * 900
+    controller.run_turn(session, long_root, top_k=3)
+    controller.run_turn(session, "Tell me more", top_k=3)
+    assert core._retrieval.queries[1] == "r" * 499 + "…" + "\nTell me more"
+
+
 def test_dialogue_engine_still_receives_only_the_current_question(monkeypatch):
     controller, _, _, spy = controller_for(monkeypatch, [ive_report(), ive_report()])
     session = controller.create_session()

@@ -14,8 +14,9 @@ Two things happen here and nothing else:
   `ConversationContext` (or `None` when there is nothing to remember),
   dropping the oldest turn while the total exceeds its cap.
 
-`retrieval_query_for` states the one retrieval rule (RQ-A1): with context,
-the most recent prior USER question, a newline, then the current question;
+`retrieval_query_for` states the one retrieval rule (RQ-A1, revised as
+RQ-A1-R1): with context, the session's ROOT user question (its first
+COMPLETED turn's question, capped), a newline, then the current question;
 without context, the current question itself, unchanged. Prior model text
 never reaches retrieval.
 """
@@ -86,22 +87,34 @@ def prior_turn_from_ask_result(
     )
 
 
+def root_question_for(question: str) -> str:
+    """The session root (RQ-A1-R1): the normalized question, capped like any
+    remembered question."""
+    return cap_text(question, QUESTION_CHAR_CAP)
+
+
 def build_conversation_context(
-    window: Iterable[PriorTurnContext],
+    window: Iterable[PriorTurnContext], *, root_question: str | None,
 ) -> ConversationContext | None:
-    """The context for the next turn, oldest first, or None when empty."""
+    """The context for the next turn, oldest first, or None when empty.
+
+    `root_question` is the session's established root; with no root there is
+    no follow-up context (the turn runs exactly as a first turn).
+    """
     turns = list(window)
     while turns and sum(text_chars(turn) for turn in turns) > TOTAL_CHAR_CAP:
         turns.pop(0)
-    if not turns:
+    if not turns or root_question is None:
         return None
     prior_turns = tuple(turns)
     return ConversationContext(
-        prior_turns=prior_turns, context_sha256=context_sha256(prior_turns)
+        prior_turns=prior_turns,
+        context_sha256=context_sha256(prior_turns),
+        root_question=root_question,
     )
 
 
 def retrieval_query_for(question: str, context: ConversationContext | None) -> str:
     if context is None:
         return question
-    return context.prior_turns[-1].question + "\n" + question
+    return context.root_question + "\n" + question

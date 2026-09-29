@@ -113,6 +113,40 @@ Uncertainty noted: …   (items joined by "; ", or "none")
 - The Context Pack, governance `question_id`, Model Context `question`, Turn
   Record `question` and composer input all keep the current question.
 
+#### RQ-A1-R1 (revision of RQ-A1, operator decision CHANGE_TO_ROOT_ANCHOR, 2026-09-29)
+
+This revision supersedes the "with context" line of RQ-A1 above. The original text
+is kept for history.
+
+**Why.** An offline probe used the production MiniLM path, pinned revision
+`1110a243…`, with CP-0003 vector parity at a maximum difference of 1.6e-7, over pack TW-CP-0005.
+- The original rule lost the ION topic entirely on chained vague follow-ups (turns 3 and 4).
+- A root-anchored query kept it at 5 of 5.
+
+**Rule.**
+- **With context:** `retrieval_query = <session root question> + "\n" + <current question>`.
+- **Root question:** the normalized user question of the session's **first COMPLETED**
+  turn, capped at 500 characters (the D6 question cap).
+  - It is set once and never replaced.
+  - CLARIFY outcomes and FAILED turns neither establish nor replace it.
+  - It is held privately in the session's runtime state. It is never persisted, never
+    shared across sessions, and cleared with the session (close, or a new session).
+  - It is carried on `ConversationContext.root_question`, which is not part of
+    `context_sha256` and is not shown to the model.
+  - Because this adds a required structural field, the Conversation Context contract
+    moves from `ION_CONVERSATION_CONTEXT_V0_1` / `0.1` to
+    **`ION_CONVERSATION_CONTEXT_V0_2` / `0.2`** (operator decision, 2026-09-29).
+    `context_sha256` semantics are unchanged: it hashes `prior_turns` only.
+    No other contract version changes; the Turn Record and Model Context stay at v0.2.
+  - It remains available after the root turn has left the 2-turn window.
+- **Unchanged:**
+  - no context means the current question, byte-identical to before;
+  - no prior assistant or model text in retrieval;
+  - the root never enters evidence, the Model Context or the prompt;
+  - the 2-turn window, the D6 caps and no summarization;
+  - the exact `retrieval_query` is still recorded in the Turn Record's
+    `conversation_context` binding.
+
 ### CG-A1 (citation-subset guard, D5, scoped)
 
 The guard runs **only on turns that carry a non-empty conversation context**.
