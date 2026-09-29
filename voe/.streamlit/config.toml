@@ -1,0 +1,10 @@
+[theme]
+base = "light"
+primaryColor = "#1D1D1B"
+textColor = "#1D1D1B"
+borderColor = "#D9D9D6"
+
+baseFontSize = 16
+baseFontWeight = 400
+headingFontSizes = "1rem"
+headingFontWeights = 700

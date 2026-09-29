@@ -25,6 +25,23 @@ PRESENTATION_LABELS = {
 }
 
 st.set_page_config(page_title="Voice of Emergence")
+# Presentation-only styling: hide chat avatars and keep the title's layout
+# space while making it invisible (#voice-of-emergence is Streamlit's
+# auto-generated anchor for the st.title below).
+st.markdown(
+    """
+    <style>
+    [data-testid="stChatMessageAvatarUser"],
+    [data-testid="stChatMessageAvatarAssistant"] {
+        display: none !important;
+    }
+    #voice-of-emergence {
+        visibility: hidden;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def _init_state() -> None:
