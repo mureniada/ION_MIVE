@@ -73,8 +73,9 @@ SEEDS_PATH = Path(__file__).with_name("voe_g6_l1_seeds_v0_1.json")
 # The composer system instruction built from the committed pinned profile —
 # the same value the G2 Stage B receipt records. Any drift is a structural
 # failure: L1 would no longer describe the instruction production sends.
+# VOE profile v0.3 (2026-09-29); under v0.2 it was 0524cf8c…f7de.
 EXPECTED_SYSTEM_INSTRUCTION_SHA256 = (
-    "0524cf8c78d4f1802e74248db9aaaad4245c5b15a27742e0c2227b8d3708f7de"
+    "46a5cd85f357b5ddddbfaef861c99cd754c9a9e4720c49d7c39a0618e7cad5de"
 )
 
 SCRIPTED_PROVIDER = "G6_L1_SCRIPTED_FAKE"

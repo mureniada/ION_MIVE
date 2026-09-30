@@ -15,7 +15,7 @@ reading, or activation logic; constructing either from real, verified files
 is `loader.py`'s job.
 
 Gate 2 + Gate 2A (`loader.py`) implement the fixed, pinned, four-file
-runtime behavioral payload for VOE-DIALOGUE-PROFILE v0.2 — read exactly by
+runtime behavioral payload for VOE-DIALOGUE-PROFILE v0.3 — read exactly by
 name, never by directory listing, each file read exactly once — fail-closed
 byte/hash/identity/fingerprint/UTF-8 validation, and the `VOE_PROFILE_ENABLED`
 on/off law. It does not wire a `VOERuntimeProfile` into `Core.ask()`,

@@ -236,6 +236,10 @@ _FORBIDDEN_SUGGESTION_TOKENS = ("[", "]", "::", "http", "www.")
 # "https://doi.org"), case-insensitive. Ordinary words that merely contain the
 # letters ("doing", "undoing", "avoid") are NOT rejected.
 _DOI_CITATION = re.compile(r"\bdoi\b|doi:|doi\.org", re.IGNORECASE)
+# Held Works material must never surface as a suggestion (case-insensitive
+# substring): "Nature Banking" is pending and kept out of suggested navigation
+# (OP-DEC-20260929-02); the closing-block wording is pending (OP-DEC-20260929-04).
+_BLOCKED_SUGGESTION_PHRASES = ("nature banking", "rather than life serving money")
 
 
 def _question_key(text: str) -> str:
@@ -248,7 +252,8 @@ def filter_suggested_questions(raw: object, current_question: str) -> tuple[str,
     Accepts only items that are strings; trim to 8..120 characters; contain
     exactly one "?" and end with it; contain no newline; contain none of
     "[", "]", "::", "http", "www." (case-insensitive) and no citation-like DOI
-    (standalone word "doi", "doi:", "doi.org"); differ from the
+    (standalone word "doi", "doi:", "doi.org"); contain no blocked held-Works
+    phrase (`_BLOCKED_SUGGESTION_PHRASES`); differ from the
     current question (case/whitespace-insensitive); and are unique
     (case/whitespace-insensitive, first kept). The first 3 valid items are
     kept; fewer than 2 valid items yields none. Anything that is not a list
@@ -273,6 +278,8 @@ def filter_suggested_questions(raw: object, current_question: str) -> tuple[str,
         if any(token in lowered for token in _FORBIDDEN_SUGGESTION_TOKENS):
             continue
         if _DOI_CITATION.search(text):
+            continue
+        if any(phrase in lowered for phrase in _BLOCKED_SUGGESTION_PHRASES):
             continue
         key = _question_key(text)
         if key == current or key in seen:

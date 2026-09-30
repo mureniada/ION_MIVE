@@ -1,0 +1,11 @@
+{
+  "schema": "VOE_SOURCE_LABELS_V0_1",
+  "purpose": "Presentation-only display names for source ids shown under Sources. Unknown ids are shown as-is.",
+  "labels": {
+    "TW-SRC-0001": "The Works — ION NETA Paper",
+    "TW-SRC-0002": "The Works — ION Financial Flywheel",
+    "TW-SRC-0003": "The Works — 27 questions about money, nature and the next economic system",
+    "TW-SRC-0004": "Frontiers in Cognition 5:1806052 (2026)",
+    "TW-SRC-0005": "Acoustics 8(1):7 (2026)"
+  }
+}

@@ -1,7 +1,7 @@
 """VOE Dialogue Profile runtime loader (v0.1, Gate 2 + Gate 2A).
 
 Loads and fail-closed validates the exact, pinned, four-file runtime
-behavioral payload for VOE-DIALOGUE-PROFILE v0.2, and materializes the
+behavioral payload for VOE-DIALOGUE-PROFILE v0.3, and materializes the
 result as a `VOERuntimeProfile` — one verified `VOEProfileBinding` identity
 plus the actual verified behavioral text a composer needs. It does not
 decide whether the loaded profile is ever wired into a Response Composer, a
@@ -25,8 +25,8 @@ same single pass — never a second, independently implemented loader — kept
 only so a caller wanting identity alone need not depend on the text fields.
 
 Exactly four files may ever be opened by this module, by fixed filename,
-never by directory listing: `01-VOE-DIALOGUE-PROFILE-v0.2.md`,
-`02-VOE-STYLE-PARAMETERS-v0.1.json`,
+never by directory listing: `01-VOE-DIALOGUE-PROFILE-v0.3.md`,
+`02-VOE-STYLE-PARAMETERS-v0.2.json`,
 `03-VOE-ETHICAL-INTERACTION-POLICY-v0.1.md`,
 `04-VOE-ILLUSTRATIVE-REASONING-POLICY-v0.1.md`. No other file in a supplied
 bundle directory is ever read, however many other files that directory
@@ -50,7 +50,7 @@ identity must never be satisfiable by either of them.
 
 `profile_id` and `profile_version` are independently verified against the
 values embedded in the runtime style-parameters file itself
-(`02-VOE-STYLE-PARAMETERS-v0.1.json`), never merely asserted — a mismatch
+(`02-VOE-STYLE-PARAMETERS-v0.2.json`), never merely asserted — a mismatch
 there is a real, contentful failure, not a comparison of one hardcoded
 constant against another.
 
@@ -79,22 +79,27 @@ VOE_PROFILE_LOADER_ID = "ION_VOE_PROFILE_LOADER_V0_1"
 VOE_PROFILE_LOADER_VERSION = "0.1"
 
 # The exact, pinned, ordered runtime behavioral payload for
-# VOE-DIALOGUE-PROFILE v0.2 — (filename, expected byte count, expected
-# SHA-256), verified against the source preparation pack's own
-# 90-BUNDLE-MANIFEST.json / 91-PAYLOAD-SHA256SUMS.txt. Already sorted by
-# path — "01-..." < "02-..." < "03-..." < "04-..." both ordinally and
-# numerically — so this literal tuple order IS the canonicalization order;
-# nothing here re-sorts it.
+# VOE-DIALOGUE-PROFILE v0.3 — (filename, expected byte count, expected
+# SHA-256). v0.3 (operator-approved 2026-09-29, VOE client-experience
+# refinement) is a NEW version beside v0.2: 01 and 02 are new files; 03 and
+# 04 are the unchanged v0.1 files. Already sorted by path — "01-..." <
+# "02-..." < "03-..." < "04-..." both ordinally and numerically — so this
+# literal tuple order IS the canonicalization order; nothing here re-sorts it.
+#
+# Historical (no longer loaded; files kept byte-identical in assets/):
+# v0.2 = 01-VOE-DIALOGUE-PROFILE-v0.2.md 13140 a5d96b96…4298,
+#        02-VOE-STYLE-PARAMETERS-v0.1.json 1384 389bee95…f364,
+#        same 03/04; runtime fingerprint 432dd52a…70f5.
 RUNTIME_BEHAVIORAL_FILES: tuple[tuple[str, int, str], ...] = (
     (
-        "01-VOE-DIALOGUE-PROFILE-v0.2.md",
-        13140,
-        "a5d96b9661d0ef6e6d752dd84e980e96461a957e5a9b82c9df55239a74484298",
+        "01-VOE-DIALOGUE-PROFILE-v0.3.md",
+        16586,
+        "be87fb34783f5d85e605757e13de4147cdbc2725c792b3a849c65419b1225287",
     ),
     (
-        "02-VOE-STYLE-PARAMETERS-v0.1.json",
-        1384,
-        "389bee95e9a4932b09b724d369abe9771d48f45d8c5fc41e59030fc14b8df364",
+        "02-VOE-STYLE-PARAMETERS-v0.2.json",
+        1931,
+        "1428ba1b11091700495b99e4b9f09eeeb8606cd4d45528bd39344c79807eee61",
     ),
     (
         "03-VOE-ETHICAL-INTERACTION-POLICY-v0.1.md",
@@ -110,28 +115,28 @@ RUNTIME_BEHAVIORAL_FILES: tuple[tuple[str, int, str], ...] = (
 
 # The one file, of the four, whose own content also states the profile's
 # identity — checked against content, never merely asserted against itself.
-_IDENTITY_SOURCE_FILE = "02-VOE-STYLE-PARAMETERS-v0.1.json"
+_IDENTITY_SOURCE_FILE = "02-VOE-STYLE-PARAMETERS-v0.2.json"
 
 # Which VOERuntimeProfile text field each runtime file's decoded content
 # becomes. Exhaustive and fixed for exactly this one pinned bundle — not a
 # general schema, just the one mapping this contract needs.
 _TEXT_FIELD_BY_FILENAME = {
-    "01-VOE-DIALOGUE-PROFILE-v0.2.md": "dialogue_profile_text",
-    "02-VOE-STYLE-PARAMETERS-v0.1.json": "style_parameters_text",
+    "01-VOE-DIALOGUE-PROFILE-v0.3.md": "dialogue_profile_text",
+    "02-VOE-STYLE-PARAMETERS-v0.2.json": "style_parameters_text",
     "03-VOE-ETHICAL-INTERACTION-POLICY-v0.1.md": "ethical_policy_text",
     "04-VOE-ILLUSTRATIVE-REASONING-POLICY-v0.1.md": "illustrative_reasoning_policy_text",
 }
 
 EXPECTED_PROFILE_ID = "VOE-DIALOGUE-PROFILE"
-EXPECTED_PROFILE_VERSION = "0.2"
+EXPECTED_PROFILE_VERSION = "0.3"
 
-# Computed and independently verified by the VOE Gate 2 Bundle Identity
-# Audit from RUNTIME_BEHAVIORAL_FILES via `_runtime_behavioral_fingerprint`
-# below. Deliberately NOT `canonical_payload_fingerprint_sha256` (the
-# fourteen-file preparation-pack fingerprint) and NOT `PACK_ZIP_SHA256` (the
-# whole-archive hash) — see this module's docstring.
+# Computed from RUNTIME_BEHAVIORAL_FILES via `_runtime_behavioral_fingerprint`
+# below (v0.3, 2026-09-29; v0.2 was 432dd52a…70f5). Deliberately NOT
+# `canonical_payload_fingerprint_sha256` (the fourteen-file preparation-pack
+# fingerprint) and NOT `PACK_ZIP_SHA256` (the whole-archive hash) — see this
+# module's docstring.
 EXPECTED_RUNTIME_BEHAVIORAL_FINGERPRINT_SHA256 = (
-    "432dd52a9e693e301eacd299e0253c0825dde9c364151c0b21391118efb370f5"
+    "e9966bd07fe723b68e6d10112ffa8651983649c255859fd95d55abd9a90fbbee"
 )
 
 
@@ -225,7 +230,7 @@ def _verify_embedded_identity(style_json_bytes: bytes) -> None:
 
 def load_voe_runtime_profile(bundle_dir: Path | str) -> VOERuntimeProfile:
     """Load, fail-closed validate, and materialize the exact pinned
-    VOE-DIALOGUE-PROFILE v0.2 runtime behavioral payload from `bundle_dir`.
+    VOE-DIALOGUE-PROFILE v0.3 runtime behavioral payload from `bundle_dir`.
 
     This is THE load pass — the one place any file this module reads is
     opened. Opens exactly the four files named in `RUNTIME_BEHAVIORAL_FILES`,

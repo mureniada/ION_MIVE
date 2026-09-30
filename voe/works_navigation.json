@@ -1,0 +1,272 @@
+{
+  "schema": "VOE_WORKS_NAVIGATION_V0_1",
+  "purpose": "Presentation-only navigation over the authorized first-series Works Q&A. Never evidence; every click is an ordinary question through the normal submit path.",
+  "authority": {
+    "decision": "OP-DEC-20260929-09",
+    "source_id": "TW-SRC-0003",
+    "content_pack": "TW-CP-0006",
+    "register_sha256": "1c4cae328acc929f771de4a610771f52828949278d5467225a56f3d51a42afc8",
+    "generated": "2026-09-30",
+    "scope_note": "Valid only while OP-DEC-20260929-09 is in force (staging refinement cycle). Regenerate or empty when that scope ends."
+  },
+  "rules": {
+    "opening": "Operator-approved opening questions (Q12, Q13, Q23).",
+    "navigable_after_answer": "False for Q9, Q16, Q17, Q27 (operator) and for any object whose root-anchored retrieval after the starter did not return it in the top 3 (probe 2026-09-29).",
+    "max_works_items_after_answer": 2
+  },
+  "items": [
+    {
+      "object_id": "TW-OBJ-0025",
+      "fragment_id": "TW-PROP-0025",
+      "q_number": 1,
+      "question": "What is the essence of money?",
+      "object_sha256": "cec2686133e309360dfa02783a3364f7156c3241ab2aeb32aaca01ef962ba4d2",
+      "opening": false,
+      "navigable_after_answer": false,
+      "related": [],
+      "source_reference_label": "Q1 · What is the essence of money?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 5
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0033",
+      "fragment_id": "TW-PROP-0033",
+      "q_number": 9,
+      "question": "What would be needed to correct this?",
+      "object_sha256": "39e831a63897d9ffa097a573f90b2b3191e7b8387d55a73def92943dd5a9f845",
+      "opening": false,
+      "navigable_after_answer": false,
+      "related": [
+        "TW-OBJ-0044"
+      ],
+      "source_reference_label": "Q9",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": null
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0036",
+      "fragment_id": "TW-PROP-0036",
+      "q_number": 12,
+      "question": "How does ION relate to money?",
+      "object_sha256": "568e95bc751b72c565d3f916c9bf92fe7365e36011903eb2dc11b9271a6fe2d6",
+      "opening": true,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q12 · How does ION relate to money?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0037",
+      "fragment_id": "TW-PROP-0037",
+      "q_number": 13,
+      "question": "What problem is ION trying to resolve?",
+      "object_sha256": "135694cf62eefac5396c3c7c81d7105e7e97e0416d9ea426d31c0ce729da0cb2",
+      "opening": true,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q13 · What problem is ION trying to resolve?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0040",
+      "fragment_id": "TW-PROP-0040",
+      "q_number": 16,
+      "question": "What should the role of nature be in a future monetary system?",
+      "object_sha256": "29fade2be171f15af541d2a54034a6227e5a022587306a708cb728be228c3bd0",
+      "opening": false,
+      "navigable_after_answer": false,
+      "related": [],
+      "source_reference_label": "Q16 · What should the role of nature be in a future monetary system?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": null
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0041",
+      "fragment_id": "TW-PROP-0041",
+      "q_number": 17,
+      "question": "How do we get from today's system to that future?",
+      "object_sha256": "bc8db8548db0b9059f187aba493475a991728e328371686e7b4339c694e56dbf",
+      "opening": false,
+      "navigable_after_answer": false,
+      "related": [],
+      "source_reference_label": "Q17 · How do we get from today's system to that future?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 3,
+        "anchored_after_starter_rank": null
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0043",
+      "fragment_id": "TW-PROP-0043",
+      "q_number": 19,
+      "question": "How can ION support a more nature-friendly financial system?",
+      "object_sha256": "b12a417c1ab1fb81fa8f79068293a8d2340d827fc8f1fb456209bd974afeba2f",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q19 · How can ION support a more nature-friendly financial system?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 2
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0044",
+      "fragment_id": "TW-PROP-0044",
+      "q_number": 20,
+      "question": "What is the role of The Works Research Institute?",
+      "object_sha256": "843b76c86a53e36330926308fc6e6940be77e4ba687edc9b0a95d2fb4f30da25",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q20 · What is the role of The Works Research Institute?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0045",
+      "fragment_id": "TW-PROP-0045",
+      "q_number": 21,
+      "question": "How does Lyra fit into the story?",
+      "object_sha256": "ddf039cdd6051dcb403b89b4c5e1fe01cd9b4def33201c10df9d7db40190c539",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q21 · How does Lyra fit into the story?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 2
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0046",
+      "fragment_id": "TW-PROP-0046",
+      "q_number": 22,
+      "question": "What does ION mean for Lyra, and what does Lyra mean for ION?",
+      "object_sha256": "06869eb4fc31dffb8040b2fff57adbc0117f84f822d6041fe3d06f549d54e493",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q22 · What does ION mean for Lyra, and what does Lyra mean for ION?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0047",
+      "fragment_id": "TW-PROP-0047",
+      "q_number": 23,
+      "question": "What makes ION a wavelet?",
+      "object_sha256": "482bf0294ab76b69441429c4b9cf312206c8897904e95d0f22f0ce13d60d064c",
+      "opening": true,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q23 · What makes ION a wavelet?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0049",
+      "fragment_id": "TW-PROP-0049",
+      "q_number": 25,
+      "question": "Could ION become a new type of financial guarantee?",
+      "object_sha256": "c37a40d90f3ed38417fc0e7c79f70c2ed75283c12a36e333c171ca88c4d64ce6",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [],
+      "source_reference_label": "Q25 · Could ION become a new type of financial guarantee?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0050",
+      "fragment_id": "TW-PROP-0050",
+      "q_number": 26,
+      "question": "What is the future potential of Lyra and ION for the global monetary system?",
+      "object_sha256": "65c6a3e729998089b751f891cb7549708eb20ea7fcd2d9ab5686c0e8cacc4392",
+      "opening": false,
+      "navigable_after_answer": true,
+      "related": [
+        "TW-OBJ-0046"
+      ],
+      "source_reference_label": "Q26 · What is the future potential of Lyra and ION for the global monetary system?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": 1
+      }
+    },
+    {
+      "object_id": "TW-OBJ-0051",
+      "fragment_id": "TW-PROP-0051",
+      "q_number": 27,
+      "question": "What should ultimately be the position of money if we want long-term prosperity?",
+      "object_sha256": "72d512e44caabb8b9879d33d07c9ef5a8584a6e5e6a3c0edd0a89af64902edb9",
+      "opening": false,
+      "navigable_after_answer": false,
+      "related": [],
+      "source_reference_label": "Q27 · What should ultimately be the position of money if we want long-term prosperity?",
+      "retrieval_probe_2026_09_29": {
+        "standalone_rank": 1,
+        "anchored_after_starter_rank": null
+      }
+    }
+  ],
+  "blocked": {
+    "fragments": [
+      "TW-PROP-0026",
+      "TW-PROP-0027",
+      "TW-PROP-0028",
+      "TW-PROP-0029",
+      "TW-PROP-0030",
+      "TW-PROP-0031",
+      "TW-PROP-0032",
+      "TW-PROP-0034",
+      "TW-PROP-0035",
+      "TW-PROP-0038",
+      "TW-PROP-0039",
+      "TW-PROP-0042",
+      "TW-PROP-0048",
+      "TW-PROP-0052"
+    ],
+    "questions": [
+      "What has historically been the base layer of money?",
+      "What changed after 1971?",
+      "What are the layers of the money system?",
+      "How is money actually created?",
+      "What is the role of the central bank?",
+      "What is the underlying business model of the current monetary system?",
+      "What is wrong with the current money system?",
+      "What is the digital euro?",
+      "What does CBDC mean?",
+      "Why does ION take the opposite position to conventional money creation?",
+      "What is the role of nature in today's money system?",
+      "Who are the main actors in the monetary system?",
+      "What would Nature Banking mean?",
+      "What would be needed to correct this?"
+    ],
+    "phrases": [
+      "nature banking",
+      "rather than life serving money"
+    ],
+    "note": "Held/pending TW-SRC-0003 material (12 HOLD_FOR_EXPERT_REVIEW, TW-PROP-0048, TW-PROP-0052) and the current Q9 wording, which refers back to held Q8. Used only to block."
+  }
+}

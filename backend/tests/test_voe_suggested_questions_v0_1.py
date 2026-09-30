@@ -35,8 +35,10 @@ from tests.test_orchestrator_conversation_context_v0_1 import ctx_core, ive_repo
 
 # The composer system instruction the G6 L1 evaluator pins
 # (scripts/voe_g6_l1_offline_eval.py EXPECTED_SYSTEM_INSTRUCTION_SHA256).
+# VOE profile v0.3 (2026-09-29); under v0.2 it was 0524cf8c…f7de. The
+# composer's own preamble and schema are unchanged — only profile text moved.
 PINNED_SYSTEM_INSTRUCTION_SHA256 = (
-    "0524cf8c78d4f1802e74248db9aaaad4245c5b15a27742e0c2227b8d3708f7de"
+    "46a5cd85f357b5ddddbfaef861c99cd754c9a9e4720c49d7c39a0618e7cad5de"
 )
 QUESTION = "What is ION and how does it work?"
 S1 = "How does ION work in practice?"

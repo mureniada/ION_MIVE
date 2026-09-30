@@ -15,20 +15,29 @@ import streamlit as st
 
 import pilot_client as pc
 
-LOADING_TEXT = "Considering the evidence…"
-WELCOME_TEXT = "Ask a question in your own words, or begin with the one below."
+LOADING_TEXT = "One moment…"
+WELCOME_TEXT = "Ask a question in your own words, or begin with one of these."
 BASE_QUESTIONS_PATH = Path(__file__).resolve().parent / "base_questions.json"
+WORKS_NAVIGATION_PATH = Path(__file__).resolve().parent / "works_navigation.json"
+SOURCE_LABELS_PATH = Path(__file__).resolve().parent / "source_labels.json"
 HANDOFF_QUERY_PARAM = "q"
 SAFE_ERROR_TEXT = "Voice of Emergence could not complete this request. Please try again."
-CLARIFY_TEXT = (
-    "Could you say a bit more about what you're asking? "
-    "That will help find the right evidence."
-)
-UNCERTAINTY_HEADING = "What remains uncertain"
+CLARIFY_TEXT = "Could you say a little more about what you'd like to know?"
+# v0.3 surface: the natural answer stays on top; sources and every technical
+# disclosure move, unchanged, into two collapsed sections.
+SOURCES_HEADING = "Sources"
+ABOUT_HEADING = "About this answer"
+OPEN_POINTS_HEADING = "Open points"
+SOURCE_LINKS_HEADING = "How the sources connect"
+# Shown on the main surface ONLY when the text was not composed (FALLBACK or no
+# presentation step), so stated uncertainty is never hidden behind a collapse.
+FALLBACK_OPEN_POINTS_PREFIX = "Still open: "
 PRESENTATION_LABELS = {
     "COMPOSED": "Presented in the Voice of Emergence style from the verified interpretation.",
     "FALLBACK": "Shown in standard form.",
 }
+MAX_SUGGESTIONS = 3
+MAX_WORKS_SUGGESTIONS = 2
 
 st.set_page_config(page_title="Voice of Emergence")
 # Presentation-only styling: hide chat avatars and keep the title's layout
@@ -81,8 +90,58 @@ def _load_base_questions() -> dict[str, str]:
     return questions
 
 
+def _load_json(path: Path):
+    """A missing or malformed presentation file yields None, never a crash."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _load_works_navigation() -> tuple[list[dict], dict]:
+    """Authorized first-series Works questions (presentation-only navigation).
+
+    Returns (items in Q order, blocked). Items missing a question or object id
+    are dropped; a missing or malformed file yields no Works navigation.
+    """
+    raw = _load_json(WORKS_NAVIGATION_PATH)
+    if not isinstance(raw, dict):
+        return [], {}
+    items = [
+        i for i in raw.get("items") or []
+        if isinstance(i, dict) and isinstance(i.get("object_id"), str)
+        and isinstance(i.get("question"), str) and i["question"].strip()
+    ]
+    blocked = raw.get("blocked") if isinstance(raw.get("blocked"), dict) else {}
+    return items, blocked
+
+
+def _load_source_labels() -> dict[str, str]:
+    raw = _load_json(SOURCE_LABELS_PATH)
+    labels = raw.get("labels") if isinstance(raw, dict) else None
+    if not isinstance(labels, dict):
+        return {}
+    return {k: v for k, v in labels.items() if isinstance(k, str) and isinstance(v, str) and v}
+
+
+def _key(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
 _init_state()
 BASE_QUESTIONS = _load_base_questions()
+WORKS_ITEMS, WORKS_BLOCKED = _load_works_navigation()
+WORKS_BY_OBJECT = {i["object_id"]: i for i in WORKS_ITEMS}
+OPENING_QUESTIONS = [i for i in WORKS_ITEMS if i.get("opening") is True]
+SOURCE_LABELS = _load_source_labels()
+_BLOCKED_QUESTION_KEYS = {_key(q) for q in WORKS_BLOCKED.get("questions") or [] if isinstance(q, str)}
+_BLOCKED_PHRASES = tuple(p.casefold() for p in WORKS_BLOCKED.get("phrases") or [] if isinstance(p, str) and p)
+
+
+def _is_blocked_suggestion(text: str) -> bool:
+    """Held/pending Works material never surfaces as a suggestion."""
+    key = _key(text)
+    return key in _BLOCKED_QUESTION_KEYS or any(p in key for p in _BLOCKED_PHRASES)
 
 try:
     _CLIENT = pc.PilotClient()
@@ -107,21 +166,55 @@ def _new_conversation() -> None:
     st.rerun()
 
 
-def _render_evidence_item(item: dict) -> None:
+def _object_id(item: dict) -> str | None:
+    """The Works object id behind an evidence row ("TW-OBJ-0047::c0" -> "TW-OBJ-0047")."""
+    for field in ("document_id", "chunk_id"):
+        value = item.get(field)
+        if isinstance(value, str) and value.startswith("TW-OBJ-"):
+            return value.split("::", 1)[0]
+    return None
+
+
+def _source_name(item: dict) -> str:
     source = item.get("source") or ""
-    title = item.get("title") or source or "Source"
-    st.markdown(f"**Source:** {title}")
+    return SOURCE_LABELS.get(source) or item.get("title") or source or "Source"
 
+
+def _source_reference(item: dict) -> str:
+    works = WORKS_BY_OBJECT.get(_object_id(item) or "")
+    if works and isinstance(works.get("source_reference_label"), str):
+        return works["source_reference_label"]
     page = item.get("page")
-    reference = page if page not in (None, "") else (item.get("chunk_id") or item.get("document_id"))
-    st.markdown(f"**Reference:** {reference if reference not in (None, '') else '—'}")
+    if page not in (None, ""):
+        return f"p. {page}"
+    reference = item.get("chunk_id") or item.get("document_id")
+    return str(reference) if reference not in (None, "") else "—"
 
-    st.markdown(f"**Excerpt:** {item.get('excerpt') or ''}")
 
-    claim_linkage = item.get("claim_linkage")
-    if claim_linkage:
-        st.markdown(f"**Linked claim:** {claim_linkage}")
+def _render_source_item(item: dict) -> None:
+    st.markdown(f"**{_source_name(item)}** · {_source_reference(item)}")
+    st.markdown(item.get("excerpt") or "")
     st.divider()
+
+
+def _render_about(msg: dict) -> None:
+    """Every technical disclosure, unchanged, in one collapsed section."""
+    label = PRESENTATION_LABELS.get(msg.get("presentation_status"))
+    if label:
+        st.caption(label)
+    if msg.get("disclaimer"):
+        st.caption(msg["disclaimer"])
+    uncertainty = msg.get("uncertainty") or []
+    if uncertainty:
+        st.markdown(f"**{OPEN_POINTS_HEADING}**")
+        st.markdown("\n".join(f"- {item}" for item in uncertainty))
+    links = [(item, item.get("claim_linkage")) for item in msg.get("evidence") or []]
+    links = [(item, claim) for item, claim in links if claim]
+    if links:
+        st.markdown(f"**{SOURCE_LINKS_HEADING}**")
+        st.markdown("\n".join(
+            f"- {_source_name(item)} · {_source_reference(item)}: {claim}" for item, claim in links
+        ))
 
 
 def _render_message(msg: dict) -> None:
@@ -132,19 +225,17 @@ def _render_message(msg: dict) -> None:
         elif kind == "answer":
             st.write(msg["primary_answer"])
             uncertainty = msg.get("uncertainty") or []
-            if uncertainty:
-                st.markdown(f"**{UNCERTAINTY_HEADING}**")
-                st.markdown("\n".join(f"- {item}" for item in uncertainty))
-            label = PRESENTATION_LABELS.get(msg.get("presentation_status"))
-            if label:
-                st.caption(label)
-            if msg.get("disclaimer"):
-                st.caption(msg["disclaimer"])
+            if uncertainty and msg.get("presentation_status") != "COMPOSED":
+                # Not composed: the text shown is the standard answer, so the
+                # stated uncertainty stays visible, compactly and verbatim.
+                st.caption(FALLBACK_OPEN_POINTS_PREFIX + " · ".join(uncertainty))
             evidence = msg.get("evidence") or []
             if evidence:
-                with st.expander(f"Evidence ({len(evidence)})"):
+                with st.expander(f"{SOURCES_HEADING} ({len(evidence)})", expanded=False):
                     for item in evidence:
-                        _render_evidence_item(item)
+                        _render_source_item(item)
+            with st.expander(ABOUT_HEADING, expanded=False):
+                _render_about(msg)
         elif kind == "clarify":
             st.write(CLARIFY_TEXT)
         elif kind == "error":
@@ -182,6 +273,53 @@ def _process_turn(question: str) -> None:
         })
 
 
+def _works_next_questions(answer: dict, asked: set[str]) -> list[str]:
+    """Up to MAX_WORKS_SUGGESTIONS authorized Works questions for this answer.
+
+    Deterministic and presentation-only: start from the Works objects in this
+    answer's own sources, then their governed `related` links, then their
+    neighbours in the Q&A series; keep only items flagged
+    `navigable_after_answer`, never blocked, never already asked.
+    """
+    order = [i["object_id"] for i in WORKS_ITEMS]
+    candidates: list[str] = []
+    for item in answer.get("evidence") or []:
+        oid = _object_id(item)
+        if oid not in WORKS_BY_OBJECT:
+            continue
+        pos = order.index(oid)
+        neighbours = [order[p] for p in (pos - 1, pos + 1) if 0 <= p < len(order)]
+        candidates += [oid, *(WORKS_BY_OBJECT[oid].get("related") or []), *neighbours]
+    picked: list[str] = []
+    for oid in candidates:
+        works = WORKS_BY_OBJECT.get(oid)
+        if not works or works.get("navigable_after_answer") is not True:
+            continue
+        question = works["question"]
+        if _key(question) in asked or _is_blocked_suggestion(question) or question in picked:
+            continue
+        picked.append(question)
+        if len(picked) == MAX_WORKS_SUGGESTIONS:
+            break
+    return picked
+
+
+def _next_questions(answer: dict) -> list[str]:
+    """Works navigation first, then the presentation step's own suggestions."""
+    asked = {_key(m["content"]) for m in st.session_state.messages if m.get("kind") == "user"}
+    merged: list[str] = []
+    seen: set[str] = set()
+    for text in _works_next_questions(answer, asked) + list(answer.get("suggested_questions") or []):
+        key = _key(text)
+        if key in seen or key in asked or _is_blocked_suggestion(text):
+            continue
+        seen.add(key)
+        merged.append(text)
+        if len(merged) == MAX_SUGGESTIONS:
+            break
+    return merged
+
+
 def _render_latest_suggestions() -> None:
     """Suggested next questions under the LATEST answer only, and only while
     no request is in flight. A click is an ordinary question: it goes through
@@ -193,7 +331,7 @@ def _render_latest_suggestions() -> None:
     latest = messages[latest_index]
     if latest.get("kind") != "answer":
         return
-    for n, suggestion in enumerate(latest.get("suggested_questions") or []):
+    for n, suggestion in enumerate(_next_questions(latest)):
         if st.button(suggestion, key=f"suggest-{latest_index}-{n}"):
             _submit(suggestion)
 
@@ -238,6 +376,10 @@ if not st.session_state.messages and not st.session_state.request_in_flight:
     for question_id, question in BASE_QUESTIONS.items():
         if st.button(question, key=f"starter-{question_id}"):
             _submit(question)
+    # Authorized first-series Works questions: ordinary questions, same path.
+    for works in OPENING_QUESTIONS:
+        if st.button(works["question"], key=f"opening-{works['object_id']}"):
+            _submit(works["question"])
 
 for msg in st.session_state.messages:
     _render_message(msg)

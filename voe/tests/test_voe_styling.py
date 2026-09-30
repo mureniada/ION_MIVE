@@ -67,8 +67,10 @@ class ConfigTests(unittest.TestCase):
 
 
 class LoadingTextTests(unittest.TestCase):
-    def test_loading_text_is_preserved(self):
-        self.assertEqual(_module_constant("LOADING_TEXT"), "Considering the evidence…")
+    def test_loading_text_is_natural(self):
+        # v0.3 (operator-approved 2026-09-29): no "evidence" in the loading state.
+        self.assertEqual(_module_constant("LOADING_TEXT"), "One moment…")
+        self.assertNotIn("evidence", _module_constant("LOADING_TEXT").casefold())
 
 
 @mock.patch.dict("os.environ", {pc._BASE_URL_ENV_VAR: _BASE_URL})
@@ -106,7 +108,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertFalse(at.exception, at.exception)
         run_turn.assert_called_once_with("s-1", "What is ION?")
         markdown = self._markdown_values(at)
-        self.assertIn("**What remains uncertain**", markdown)
+        self.assertIn("**Open points**", markdown)
         self.assertIn("- One open question remains.", markdown)
         self.assertIn(
             "Presented in the Voice of Emergence style from the verified interpretation.",

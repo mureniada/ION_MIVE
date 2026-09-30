@@ -339,7 +339,10 @@ class AppSourceTests(unittest.TestCase):
     SOURCE = _APP_PATH.read_text(encoding="utf-8")
 
     def test_18_app_uses_the_approved_wording(self):
-        self.assertIn('"What remains uncertain"', self.SOURCE)
+        # v0.3 surface: uncertainty details live under "About this answer".
+        self.assertIn('"About this answer"', self.SOURCE)
+        self.assertIn('"Open points"', self.SOURCE)
+        self.assertNotIn('"What remains uncertain"', self.SOURCE)
         self.assertIn(_COMPOSED_LABEL, self.SOURCE)
         self.assertIn(_FALLBACK_LABEL, self.SOURCE)
 
@@ -375,7 +378,9 @@ class AppRenderTests(unittest.TestCase):
 
     def test_20_composed_turn_shows_uncertainty_and_label_but_no_operational_data(self):
         texts = self._render(_composed_backend_body())
-        self.assertIn("**What remains uncertain**", texts)
+        # v0.3: kept verbatim, inside the collapsed "About this answer" section.
+        self.assertIn("**Open points**", texts)
+        self.assertNotIn("**What remains uncertain**", texts)
         self.assertIn("- Historical origin is debated.", texts)
         self.assertIn(_COMPOSED_LABEL, texts)
         self.assertNotIn(_FALLBACK_LABEL, texts)

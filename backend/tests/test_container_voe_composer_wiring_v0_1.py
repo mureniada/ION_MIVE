@@ -70,10 +70,11 @@ def test_enabled_with_valid_bundle_constructs_composer_and_profile():
 def test_composer_profile_matches_the_verified_runtime_profile():
     _, profile = build_voe_composer(STANDARD_GEMINI, _enabled_settings())
     assert profile.binding.profile_id == "VOE-DIALOGUE-PROFILE"
-    assert profile.binding.profile_version == "0.2"
+    # VOE profile v0.3 (operator-approved 2026-09-29); v0.2 was 432dd52a…70f5.
+    assert profile.binding.profile_version == "0.3"
     assert (
         profile.binding.runtime_behavioral_fingerprint_sha256
-        == "432dd52a9e693e301eacd299e0253c0825dde9c364151c0b21391118efb370f5"
+        == "e9966bd07fe723b68e6d10112ffa8651983649c255859fd95d55abd9a90fbbee"
     )
 
 

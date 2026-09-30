@@ -132,10 +132,11 @@ class StarterFlowTests(unittest.TestCase):
         self._starter_buttons(at)[0].click().run()
         markdown = [m.value for m in at.markdown]
         self.assertIn("A grounded answer.", markdown)
-        self.assertIn("**What remains uncertain**", markdown)
+        # v0.3 surface: G7 label, uncertainty and sources kept, in collapsed sections.
+        self.assertIn("**Open points**", markdown)
         self.assertIn("- One open question remains.", markdown)
         self.assertIn(_COMPOSED_LABEL, [c.value for c in at.caption])
-        self.assertEqual([e.label for e in at.expander], ["Evidence (1)"])
+        self.assertEqual([e.label for e in at.expander], ["Sources (1)", "About this answer"])
 
 
 if __name__ == "__main__":

@@ -151,10 +151,11 @@ def test_one_byte_mutation_fails_closed(tmp_path, target):
 
 
 def test_truncated_file_fails_closed_on_byte_count(tmp_path):
-    original = (REAL_PACK_DIR / "01-VOE-DIALOGUE-PROFILE-v0.2.md").read_bytes()
+    dialogue_file = RUNTIME_BEHAVIORAL_FILES[0][0]  # the pinned 01 dialogue profile file
+    original = (REAL_PACK_DIR / dialogue_file).read_bytes()
     _seed_bundle(
         tmp_path,
-        mutate={"01-VOE-DIALOGUE-PROFILE-v0.2.md": original[:-1]},
+        mutate={dialogue_file: original[:-1]},
     )
     with pytest.raises(VOEProfileLoadError, match="bytes, expected"):
         load_voe_profile_binding(tmp_path)
@@ -195,7 +196,7 @@ def test_malformed_identity_source_json_fails_closed():
 
 
 def test_real_style_parameters_file_passes_identity_verification():
-    content = (REAL_PACK_DIR / "02-VOE-STYLE-PARAMETERS-v0.1.json").read_bytes()
+    content = (REAL_PACK_DIR / loader_module._IDENTITY_SOURCE_FILE).read_bytes()
     loader_module._verify_embedded_identity(content)  # must not raise
 
 
@@ -410,8 +411,8 @@ def test_real_pack_load_returns_all_four_nonempty_behavioral_texts():
 @pytest.mark.parametrize(
     "filename,field_name",
     [
-        ("01-VOE-DIALOGUE-PROFILE-v0.2.md", "dialogue_profile_text"),
-        ("02-VOE-STYLE-PARAMETERS-v0.1.json", "style_parameters_text"),
+        ("01-VOE-DIALOGUE-PROFILE-v0.3.md", "dialogue_profile_text"),
+        ("02-VOE-STYLE-PARAMETERS-v0.2.json", "style_parameters_text"),
         ("03-VOE-ETHICAL-INTERACTION-POLICY-v0.1.md", "ethical_policy_text"),
         ("04-VOE-ILLUSTRATIVE-REASONING-POLICY-v0.1.md", "illustrative_reasoning_policy_text"),
     ],
@@ -474,14 +475,24 @@ def test_utf8_decode_failure_fails_closed(monkeypatch):
 # --------------------------------------------------------------------- #
 # Optional cross-check: committed assets == external source pack
 # --------------------------------------------------------------------- #
+# The external preparation pack is the v0.2 source. v0.3 (2026-09-29) is a
+# local new version derived from v0.2 (see test_voe_profile_v0_3.py); the
+# committed v0.2 files it was derived from are still checked here, byte for byte.
+_V0_2_SOURCE_PACK_FILES = (
+    "01-VOE-DIALOGUE-PROFILE-v0.2.md",
+    "02-VOE-STYLE-PARAMETERS-v0.1.json",
+    "03-VOE-ETHICAL-INTERACTION-POLICY-v0.1.md",
+    "04-VOE-ILLUSTRATIVE-REASONING-POLICY-v0.1.md",
+)
+
+
 @requires_external_source_pack
-@pytest.mark.parametrize("filename", [f for f, _, _ in RUNTIME_BEHAVIORAL_FILES])
+@pytest.mark.parametrize("filename", _V0_2_SOURCE_PACK_FILES)
 def test_committed_asset_is_byte_identical_to_the_external_source_pack(filename):
-    """The committed runtime file every test above reads must be byte for
-    byte the file in the immutable source preparation pack it was taken
-    from. Reads both sides, writes neither. This is the only test in the
-    suite that depends on the external pack, and it skips where that pack
-    is absent."""
+    """The committed v0.2 source files must be byte for byte the files in the
+    immutable source preparation pack they were taken from. Reads both
+    sides, writes neither. This is the only test in the suite that depends
+    on the external pack, and it skips where that pack is absent."""
     committed = (COMMITTED_VOE_PACK_DIR / filename).read_bytes()
     external = (EXTERNAL_SOURCE_PACK_DIR / filename).read_bytes()
     assert committed == external
