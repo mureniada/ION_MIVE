@@ -1,8 +1,10 @@
 """VOE client-experience refinement v0.3 (operator-approved 2026-09-29).
 
 Natural answer on the main surface; Sources and "About this answer" collapsed;
-every technical disclosure kept verbatim; three authorized opening questions;
-bounded, allowlisted Works navigation after answers. Streamlit AppTest with
+every technical disclosure kept verbatim; bounded, allowlisted Works navigation
+after answers. Since PC1 the app reads navigation from the presentation cassette
+and the opening is the starter only; works_navigation.json remains the pinned
+generator input and is still checked here as a file. Streamlit AppTest with
 PilotClient's HTTP methods stubbed — no network, no backend, no provider.
 """
 
@@ -236,21 +238,22 @@ class AppSurfaceTests(unittest.TestCase):
         self.assertFalse([t for t in _surface_texts(at.chat_message[1]) if "Open A." in t])
 
     # --- B. Opening navigation ----------------------------------------- #
-    def test_starter_plus_exactly_three_openings(self):
+    # PC1 (design v2.1 O-3): the opening is STARTER ONLY; the v0.3 Q12/Q13/Q23
+    # entry buttons are not carried over.
+    def test_opening_is_the_starter_only(self):
         at = self._app()
         buttons = [(b.key, b.label) for b in at.button if (b.key or "").startswith(("starter-", "opening-"))]
-        self.assertEqual(buttons, [("starter-what-is-ion", "What is ION and how does it work?")]
-                         + [(f"opening-{oid}", q) for oid, q in OPENINGS])
+        self.assertEqual(buttons, [("starter-what-is-ion", "What is ION and how does it work?")])
 
     def test_opening_uses_the_normal_submit_path_and_session(self):
         self.answers = [_answer(), _answer()]
         at = self._app()
-        next(b for b in at.button if b.key == "opening-TW-OBJ-0047").click().run()
+        next(b for b in at.button if b.key == "starter-what-is-ion").click().run()
         at.run()
         self.assertFalse(at.exception, at.exception)
-        self.assertEqual(self.run_turn.call_args_list, [mock.call("s-1", "What makes ION a wavelet?")])
+        self.assertEqual(self.run_turn.call_args_list, [mock.call("s-1", "What is ION and how does it work?")])
         users = [m["content"] for m in at.session_state.messages if m["kind"] == "user"]
-        self.assertEqual(users, ["What makes ION a wavelet?"])
+        self.assertEqual(users, ["What is ION and how does it work?"])
         self._ask(at, "Tell me more.")
         self.create_session.assert_called_once()
         self.assertEqual(self.run_turn.call_args_list[-1], mock.call("s-1", "Tell me more."))
