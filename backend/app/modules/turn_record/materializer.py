@@ -44,6 +44,7 @@ from .models import (
     GovernedEvidenceBinding,
     ModelExecutionBinding,
     PriorTurnBinding,
+    RetrievalAccountingBinding,
     TurnClosureState,
     TurnConfigurationBinding,
     TurnFailure,
@@ -232,6 +233,38 @@ def _bind_conversation_context(
 
 
 # --------------------------------------------------------------------------- #
+# retrieval accounting: bound verbatim (TR-A2)
+# --------------------------------------------------------------------------- #
+_ACCOUNTING_FIELDS = (
+    "dense_retrieved",
+    "lexical_triggered",
+    "lexical_terms",
+    "lexical_candidates",
+    "lexical_added_document_ids",
+    "lexical_cache_collection",
+    "lexical_cache_fingerprint",
+    "lexical_status",
+)
+
+
+def _bind_retrieval_accounting(value: Any) -> RetrievalAccountingBinding | None:
+    """Bind the turn's retrieval accounting, read STRUCTURALLY, or its absence.
+
+    `None` means the lexical branch was not enabled for this turn. The two
+    identity sequences are carried as tuples; status consistency is enforced
+    by `RetrievalAccountingBinding` itself and the retrieved-count invariant
+    by `TurnRecord`.
+    """
+    if value is None:
+        return None
+    what = "retrieval accounting"
+    fields = {name: _attr(value, name, what) for name in _ACCOUNTING_FIELDS}
+    for name in ("lexical_terms", "lexical_added_document_ids"):
+        fields[name] = _sequence(fields[name], f"{what} {name}")
+    return RetrievalAccountingBinding(**fields)
+
+
+# --------------------------------------------------------------------------- #
 # governed basis: bound by reference, never copied
 # --------------------------------------------------------------------------- #
 def _bind_governed_evidence(governed_basis: Any) -> GovernedEvidenceBinding:
@@ -314,6 +347,7 @@ def materialize_turn_record(
     execution_profile: ExecutionProfileBinding | None = None,
     conversation_context: Any | None = None,
     retrieval_query: str | None = None,
+    retrieval_accounting: Any | None = None,
 ) -> TurnRecord:
     """Materialize the record of one COMPLETED turn.
 
@@ -411,6 +445,7 @@ def materialize_turn_record(
         conversation_context=_bind_conversation_context(
             conversation_context, retrieval_query
         ),
+        retrieval_accounting=_bind_retrieval_accounting(retrieval_accounting),
     )
 
 
@@ -432,6 +467,7 @@ def materialize_failed_turn_record(
     execution_profile: ExecutionProfileBinding | None = None,
     conversation_context: Any | None = None,
     retrieval_query: str | None = None,
+    retrieval_accounting: Any | None = None,
 ) -> TurnRecord:
     """Materialize the record of one FAILED turn.
 
@@ -525,4 +561,5 @@ def materialize_failed_turn_record(
         conversation_context=_bind_conversation_context(
             conversation_context, retrieval_query
         ),
+        retrieval_accounting=_bind_retrieval_accounting(retrieval_accounting),
     )

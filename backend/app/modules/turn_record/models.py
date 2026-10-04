@@ -41,6 +41,15 @@ is `None` exactly when the turn ran without prior-turn context. Every other
 structural absence above still holds: no session identity, no turn ordinal,
 no parent-turn link, no rendered answer, no evidence content.
 
+v0.3 amendment TR-A2 (OP-DEC-20261004-TW2-51). One optional binding is added,
+`retrieval_accounting`: how many candidates dense retrieval returned and what
+the entity lexical branch did, so a turn that merged lexical candidates can
+never be read as a plain dense top-k. It is present only when the lexical
+branch is enabled, and absent otherwise. `effective_top_k` stays the DENSE
+top-k. Identities only — no evidence content. When a governed basis is also
+present, `governed_evidence.retrieved_count` must equal `dense_retrieved` plus
+the number of added lexical identities.
+
 This module imports the standard library only. No Core, orchestrator, Core
 Adapter, governed-evidence, admission, provenance, retrieval, provider, MIVE,
 renderer, container, transport or persistence entry point is reachable from
@@ -58,8 +67,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-TURN_RECORD_CONTRACT_ID = "ION_TURN_RECORD_V0_2"
-TURN_RECORD_VERSION = "0.2"
+TURN_RECORD_CONTRACT_ID = "ION_TURN_RECORD_V0_3"
+TURN_RECORD_VERSION = "0.3"
+
+# TR-A2 (OP-DEC-20261004-TW2-51): the closed set of lexical-branch statuses.
+LEXICAL_STATUSES = ("NOT_TRIGGERED", "ADDED", "NO_MATCH", "UNAVAILABLE")
 
 # The turn identity rule, recorded as a fixed literal so it is STATED rather
 # than assumed. The runtime's `request_id` already uniquely identifies one turn;
@@ -294,6 +306,83 @@ class ConversationContextBinding:
 
 
 @dataclass(frozen=True, kw_only=True)
+class RetrievalAccountingBinding:
+    """Retrieval accounting of one turn with the lexical branch enabled (TR-A2).
+
+    Status consistency is enforced here, so no construction path can record a
+    status that disagrees with its own counts:
+
+        NOT_TRIGGERED  nothing detected: no terms, no candidates, no additions,
+                       no cache consulted
+        ADDED          at least one lexical identity added; cache identified
+        NO_MATCH       nothing NEW added — no match, or every match was
+                       already a dense candidate; cache identified
+        UNAVAILABLE    the lexical structure could not be used; nothing added
+    """
+
+    dense_retrieved: int
+    lexical_triggered: bool
+    lexical_terms: tuple[str, ...]
+    lexical_candidates: int
+    lexical_added_document_ids: tuple[str, ...]
+    lexical_cache_collection: str | None
+    lexical_cache_fingerprint: str | None
+    lexical_status: str
+
+    def __post_init__(self) -> None:
+        def fail(message: str) -> None:
+            raise TurnRecordMaterializationError("retrieval accounting: " + message)
+
+        for name in ("dense_retrieved", "lexical_candidates"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                fail(f"{name} must be a non-negative integer, found {value!r}")
+        if not isinstance(self.lexical_triggered, bool):
+            fail("lexical_triggered must be a bool")
+        for name in ("lexical_terms", "lexical_added_document_ids"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple) or not all(
+                isinstance(item, str) and item for item in value
+            ):
+                fail(f"{name} must be a tuple of non-empty strings")
+        if len(set(self.lexical_added_document_ids)) != len(self.lexical_added_document_ids):
+            fail("lexical_added_document_ids must be unique")
+        for name in ("lexical_cache_collection", "lexical_cache_fingerprint"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value):
+                fail(f"{name} must be a non-empty string or None")
+        status = self.lexical_status
+        if status not in LEXICAL_STATUSES:
+            fail(f"lexical_status must be one of {LEXICAL_STATUSES}, found {status!r}")
+
+        added = len(self.lexical_added_document_ids)
+        if status == "NOT_TRIGGERED":
+            if (self.lexical_triggered or self.lexical_terms or self.lexical_candidates
+                    or added or self.lexical_cache_collection is not None
+                    or self.lexical_cache_fingerprint is not None):
+                fail("NOT_TRIGGERED carries no terms, candidates, additions or cache")
+            return
+        if not self.lexical_triggered or not self.lexical_terms:
+            fail(f"{status} requires a triggered detector with its terms")
+        if status in ("ADDED", "NO_MATCH") and self.lexical_cache_collection is None:
+            fail(f"{status} names the collection whose cache was consulted")
+        if status == "ADDED":
+            if added == 0:
+                fail("ADDED requires at least one added identity")
+            if self.lexical_candidates < added:
+                fail("more identities added than lexical candidates matched")
+            if self.lexical_cache_fingerprint is None:
+                fail("ADDED requires the cache fingerprint")
+        elif status == "NO_MATCH":
+            if added:
+                fail("NO_MATCH adds no identity")
+            if self.lexical_cache_fingerprint is None:
+                fail("NO_MATCH requires the cache fingerprint")
+        elif added:  # UNAVAILABLE
+            fail("UNAVAILABLE adds no identity")
+
+
+@dataclass(frozen=True, kw_only=True)
 class TurnRecord:
     """The complete, immutable, provider- and transport-neutral record of one turn.
 
@@ -373,6 +462,7 @@ class TurnRecord:
     execution_profile: ExecutionProfileBinding | None = None
     failure: TurnFailure | None = None
     conversation_context: ConversationContextBinding | None = None
+    retrieval_accounting: RetrievalAccountingBinding | None = None
     turn_identity_basis: str = TURN_IDENTITY_BASIS_REQUEST_ID
     question_normalization: str = QUESTION_NORMALIZATION_STRIP
     turn_record_contract_id: str = TURN_RECORD_CONTRACT_ID
@@ -405,6 +495,25 @@ class TurnRecord:
                 "conversation_context must be a ConversationContextBinding or "
                 f"None, found {type(self.conversation_context).__name__}"
             )
+        if self.retrieval_accounting is not None:
+            if not isinstance(self.retrieval_accounting, RetrievalAccountingBinding):
+                raise TurnRecordMaterializationError(
+                    "retrieval_accounting must be a RetrievalAccountingBinding or "
+                    f"None, found {type(self.retrieval_accounting).__name__}"
+                )
+            # TR-A2 invariant: the governed basis counts exactly the dense
+            # candidates plus the added lexical identities — no more, no less.
+            if self.governed_evidence is not None:
+                expected = self.retrieval_accounting.dense_retrieved + len(
+                    self.retrieval_accounting.lexical_added_document_ids
+                )
+                if self.governed_evidence.retrieved_count != expected:
+                    raise TurnRecordMaterializationError(
+                        "governed_evidence.retrieved_count "
+                        f"{self.governed_evidence.retrieved_count} != dense_retrieved "
+                        f"{self.retrieval_accounting.dense_retrieved} + lexical added "
+                        f"{len(self.retrieval_accounting.lexical_added_document_ids)}"
+                    )
 
         # One turn names one Context Pack. The law is conditional on the
         # governed basis being present, because a turn can truthfully have built

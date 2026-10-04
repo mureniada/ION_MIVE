@@ -14,18 +14,84 @@ from typing import Any
 # --------------------------------------------------------------------------- #
 # Retrieval
 # --------------------------------------------------------------------------- #
+# OP-DEC-20261004-TW2-51: HOW a candidate was retrieved. A dense candidate
+# carries its dense similarity score; a lexical candidate carries NO score,
+# because none was computed for it — no dense similarity is ever invented.
+RETRIEVAL_BRANCH_DENSE = "DENSE"
+RETRIEVAL_BRANCH_LEXICAL = "LEXICAL"
+RETRIEVAL_BRANCHES = (RETRIEVAL_BRANCH_DENSE, RETRIEVAL_BRANCH_LEXICAL)
+
+
 @dataclass(frozen=True)
 class Evidence:
-    """One retrieved fragment. Retrieval returns these; it does not interpret."""
+    """One retrieved fragment. Retrieval returns these; it does not interpret.
+
+    `score` is the dense similarity for a DENSE candidate and `None` for a
+    LEXICAL one (TW2-51). The pairing is enforced, so a lexical candidate can
+    never carry a score and a dense candidate can never lose one.
+    """
 
     document_id: str
     source_id: str
     title: str
     content: str
-    score: float
+    score: float | None
     page: str | int | None = None
     chunk_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    retrieval_branch: str = RETRIEVAL_BRANCH_DENSE
+
+    def __post_init__(self) -> None:
+        if self.retrieval_branch not in RETRIEVAL_BRANCHES:
+            raise ValueError(
+                f"retrieval_branch must be one of {RETRIEVAL_BRANCHES}, "
+                f"found {self.retrieval_branch!r}"
+            )
+        lexical = self.retrieval_branch == RETRIEVAL_BRANCH_LEXICAL
+        if lexical and self.score is not None:
+            raise ValueError("a LEXICAL candidate carries no score")
+        if not lexical and self.score is None:
+            raise ValueError("a DENSE candidate carries its dense score")
+
+
+# OP-DEC-20261004-TW2-51 lexical branch outcome statuses (TR-A2).
+LEXICAL_STATUS_NOT_TRIGGERED = "NOT_TRIGGERED"
+LEXICAL_STATUS_ADDED = "ADDED"
+LEXICAL_STATUS_NO_MATCH = "NO_MATCH"
+LEXICAL_STATUS_UNAVAILABLE = "UNAVAILABLE"
+
+
+@dataclass(frozen=True)
+class LexicalRetrievalOutcome:
+    """What one call of the optional lexical branch produced (TW2-51).
+
+    `candidate_count` counts matches before de-duplication and the cap;
+    `evidence` holds only the candidates actually added, each materialized by
+    point id from the active collection. `cache_collection` and
+    `cache_fingerprint` identify the runtime cache consulted, or are None when
+    no cache was consulted.
+    """
+
+    status: str
+    terms: tuple[str, ...] = ()
+    candidate_count: int = 0
+    evidence: tuple[Evidence, ...] = ()
+    cache_collection: str | None = None
+    cache_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalAccounting:
+    """Per-turn retrieval accounting handed to the Turn Record (TR-A2)."""
+
+    dense_retrieved: int
+    lexical_triggered: bool
+    lexical_terms: tuple[str, ...]
+    lexical_candidates: int
+    lexical_added_document_ids: tuple[str, ...]
+    lexical_cache_collection: str | None
+    lexical_cache_fingerprint: str | None
+    lexical_status: str
 
 
 # --------------------------------------------------------------------------- #

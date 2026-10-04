@@ -12,8 +12,26 @@ from __future__ import annotations
 import uuid
 
 from ...core.errors import RetrievalError
-from ...core.models import Evidence
+from ...core.models import (
+    LEXICAL_STATUS_ADDED,
+    LEXICAL_STATUS_NO_MATCH,
+    LEXICAL_STATUS_NOT_TRIGGERED,
+    LEXICAL_STATUS_UNAVAILABLE,
+    RETRIEVAL_BRANCH_DENSE,
+    RETRIEVAL_BRANCH_LEXICAL,
+    Evidence,
+    LexicalRetrievalOutcome,
+)
 from ...core.ports import EmbeddingPort
+from .entity_lexical import (
+    CacheEntry,
+    LexicalCacheError,
+    LexicalRuntimeCache,
+    detect_entities,
+    normalize_epistemic_role,
+    rank_matches,
+    select_matches,
+)
 
 # Fixed namespace -> deterministic, stable point IDs across re-ingestion.
 _ID_NAMESPACE = uuid.UUID("6f9e3d2a-1c4b-4e8a-9f7d-2b5c8a1e0d33")
@@ -49,6 +67,32 @@ def _candidate_metadata_payload(document: dict) -> dict:
         if key in document and document[key] is not None
     }
 
+
+_LEXICAL_SCROLL_PAGE = 256
+
+
+def evidence_from_payload(
+    point_id, payload: dict | None, *, score: float | None,
+    retrieval_branch: str = RETRIEVAL_BRANCH_DENSE,
+) -> Evidence:
+    """The ONE Evidence construction path for a stored point, dense or lexical."""
+    p = payload or {}
+    return Evidence(
+        document_id=str(p.get("document_id", point_id)),
+        source_id=str(p.get("source_id", "unknown")),
+        title=str(p.get("title", "")),
+        content=str(p.get("content", "")),
+        score=score,
+        page=p.get("page"),
+        chunk_id=p.get("chunk_id"),
+        metadata={
+            k: p.get(k)
+            for k in _RETRIEVAL_METADATA_KEYS
+            if p.get(k)
+        },
+        retrieval_branch=retrieval_branch,
+    )
+
 class QdrantRetrieval:
     def __init__(
         self,
@@ -68,6 +112,9 @@ class QdrantRetrieval:
         self._batch_size = upsert_batch_size
         self._client = None
         self._models = None
+        # TW2-51 runtime cache: created on the first triggered lexical turn,
+        # bound to this instance's one collection for the process lifetime.
+        self._lexical_cache: LexicalRuntimeCache | None = None
 
     def _ensure_client(self):
         if self._client is None:
@@ -166,23 +213,105 @@ class QdrantRetrieval:
         hits = client.query_points(
             collection_name=self._collection, query=qvec, limit=max(1, top_k)
         ).points
-        results: list[Evidence] = []
-        for h in hits:
-            p = h.payload or {}
-            results.append(
-                Evidence(
-                    document_id=str(p.get("document_id", h.id)),
-                    source_id=str(p.get("source_id", "unknown")),
-                    title=str(p.get("title", "")),
-                    content=str(p.get("content", "")),
-                    score=float(h.score),
-                    page=p.get("page"),
-                    chunk_id=p.get("chunk_id"),
-                    metadata={
-                        k: p.get(k)
-                        for k in _RETRIEVAL_METADATA_KEYS
-                        if p.get(k)
-                    },
-                )
+        return [
+            evidence_from_payload(h.id, h.payload, score=float(h.score)) for h in hits
+        ]
+
+    # -- optional entity lexical branch (OP-DEC-20261004-TW2-51) -------- #
+    # Read-only by construction: only count, scroll (unfiltered) and retrieve
+    # by point id are called. No filter is sent, so the strict-mode
+    # `unindexed_filtering_retrieve: false` setting is never exercised.
+    def _lexical_cache_instance(self) -> LexicalRuntimeCache:
+        if self._lexical_cache is None:
+            self._lexical_cache = LexicalRuntimeCache(
+                self._collection, self._load_lexical_entries
             )
-        return results
+        return self._lexical_cache
+
+    def _load_lexical_entries(self) -> tuple[int, list[CacheEntry], int]:
+        client = self._ensure_client()
+        before = int(client.count(collection_name=self._collection, exact=True).count)
+        entries: list[CacheEntry] = []
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=self._collection,
+                limit=_LEXICAL_SCROLL_PAGE,
+                offset=offset,
+                with_payload=["document_id", "content", "ion_content_pack_lineage"],
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                entries.append(
+                    CacheEntry(
+                        point_id=str(point.id),
+                        document_id=str(payload.get("document_id", point.id)),
+                        content=str(payload.get("content", "")),
+                        epistemic_role=normalize_epistemic_role(payload),
+                    )
+                )
+            if offset is None:
+                break
+        after = int(client.count(collection_name=self._collection, exact=True).count)
+        return before, entries, after
+
+    def _materialize_by_id(self, point_ids: list[str]) -> list[Evidence]:
+        client = self._ensure_client()
+        records = client.retrieve(
+            collection_name=self._collection,
+            ids=point_ids,
+            with_payload=True,
+            with_vectors=False,
+        )
+        by_id = {str(r.id): r for r in records}
+        missing = [pid for pid in point_ids if pid not in by_id]
+        if missing:
+            raise LexicalCacheError(f"nominated points not found by id: {len(missing)}")
+        return [
+            evidence_from_payload(
+                by_id[pid].id, by_id[pid].payload, score=None,
+                retrieval_branch=RETRIEVAL_BRANCH_LEXICAL,
+            )
+            for pid in point_ids
+        ]
+
+    def lexical_candidates(
+        self, question: str, *, exclude_document_ids: tuple[str, ...] = (), limit: int = 3
+    ) -> LexicalRetrievalOutcome:
+        terms = detect_entities(question)
+        if not terms:
+            return LexicalRetrievalOutcome(status=LEXICAL_STATUS_NOT_TRIGGERED)
+        term_text = tuple(t.full_form for t in terms)
+        cache = self._lexical_cache_instance()
+        try:
+            snapshot = cache.snapshot()
+        except LexicalCacheError:
+            return LexicalRetrievalOutcome(
+                status=LEXICAL_STATUS_UNAVAILABLE, terms=term_text,
+                cache_collection=cache.collection,
+            )
+        if snapshot.collection != self._collection:  # never mix collections
+            return LexicalRetrievalOutcome(
+                status=LEXICAL_STATUS_UNAVAILABLE, terms=term_text,
+                cache_collection=snapshot.collection,
+            )
+        matches = rank_matches(snapshot.entries, terms)
+        selected = select_matches(
+            matches, exclude_document_ids=exclude_document_ids, limit=limit
+        )
+        identity = {
+            "terms": term_text,
+            "candidate_count": len(matches),
+            "cache_collection": snapshot.collection,
+            "cache_fingerprint": snapshot.fingerprint,
+        }
+        if not selected:
+            return LexicalRetrievalOutcome(status=LEXICAL_STATUS_NO_MATCH, **identity)
+        try:
+            evidence = self._materialize_by_id([m.point_id for m in selected])
+        except Exception:
+            return LexicalRetrievalOutcome(status=LEXICAL_STATUS_UNAVAILABLE, **identity)
+        return LexicalRetrievalOutcome(
+            status=LEXICAL_STATUS_ADDED, evidence=tuple(evidence), **identity
+        )

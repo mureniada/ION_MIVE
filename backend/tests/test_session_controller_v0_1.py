@@ -766,7 +766,9 @@ def test_26_turn_record_fields_unchanged():
         "configuration", "question", "retrieval_latency_ms",
         "comparison_latency_ms", "pipeline_latency_ms", "context_pack_id",
         "governed_evidence", "model_executions", "mive_overall_status",
-        "execution_profile", "failure", "conversation_context", "turn_identity_basis",
+        "execution_profile", "failure", "conversation_context",
+        # TR-A2 (OP-DEC-20261004-TW2-51): one optional field added.
+        "retrieval_accounting", "turn_identity_basis",
         "question_normalization", "turn_record_contract_id",
         "turn_record_version",
     }

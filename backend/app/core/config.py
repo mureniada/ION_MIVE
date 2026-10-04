@@ -72,6 +72,37 @@ def _strict_voe_profile_enabled(value: str | None) -> bool:
     )
 
 
+def _strict_entity_lexical_enabled(value: str | None) -> bool:
+    """OP-DEC-20261004-TW2-51 activation switch: same strict law as the VOE
+    switch above (unset/empty -> False; a malformed value raises)."""
+    if value is None or value.strip() == "":
+        return False
+    normalized = value.strip().lower()
+    if normalized in _VOE_PROFILE_ENABLED_FALSE_VALUES:
+        return False
+    if normalized in _VOE_PROFILE_ENABLED_TRUE_VALUES:
+        return True
+    accepted = sorted(_VOE_PROFILE_ENABLED_TRUE_VALUES | _VOE_PROFILE_ENABLED_FALSE_VALUES)
+    raise SettingsError(
+        f"ENTITY_LEXICAL_ENABLED={value!r} is not a recognized value. "
+        f"Unset or one of {accepted} is required; a malformed value is "
+        "never silently treated as disabled."
+    )
+
+
+def _entity_lexical_max(value: str | None) -> int:
+    """TW2-51 cap on lexical additions per turn: default 3, must be >= 1."""
+    if value is None or value.strip() == "":
+        return 3
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        raise SettingsError(f"ENTITY_LEXICAL_MAX={value!r} is not an integer") from None
+    if parsed < 1:
+        raise SettingsError(f"ENTITY_LEXICAL_MAX={value!r} must be >= 1")
+    return parsed
+
+
 @dataclass(frozen=True)
 class Settings:
     debug: bool
@@ -106,6 +137,11 @@ class Settings:
     # location: `resolve_voe_profile()` refuses to guess one. Unused when
     # `voe_profile_enabled` is False.
     voe_profile_bundle_dir: str = ""
+    # OP-DEC-20261004-TW2-51 entity lexical fallback. Defaults OFF: unset means
+    # retrieval is exactly the dense-only path. Parsed strictly, like the VOE
+    # switch. `entity_lexical_max` caps lexical additions per turn (L = 3).
+    entity_lexical_enabled: bool = False
+    entity_lexical_max: int = 3
 
     @staticmethod
     def load(env: dict[str, str] | None = None) -> "Settings":
@@ -127,6 +163,10 @@ class Settings:
             execution_profile_id=e.get("EXECUTION_PROFILE", ""),
             voe_profile_enabled=_strict_voe_profile_enabled(e.get("VOE_PROFILE_ENABLED")),
             voe_profile_bundle_dir=e.get("VOE_PROFILE_BUNDLE_DIR", ""),
+            entity_lexical_enabled=_strict_entity_lexical_enabled(
+                e.get("ENTITY_LEXICAL_ENABLED")
+            ),
+            entity_lexical_max=_entity_lexical_max(e.get("ENTITY_LEXICAL_MAX")),
         )
 
 

@@ -392,10 +392,13 @@ def test_t18_08_identity_and_contract_literals_are_fixed_and_exact():
     assert record.turn_identity_basis == TURN_IDENTITY_BASIS_REQUEST_ID
     # Amended by TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md):
     # contract v0.1 -> v0.2. A record without conversation context carries none.
-    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_2"
+    # Amended by TR-A2 (OP-DEC-20261004-TW2-51): contract v0.2 -> v0.3; a record
+    # without the lexical branch enabled carries no retrieval accounting.
+    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_3"
     assert record.turn_record_contract_id == TURN_RECORD_CONTRACT_ID
     assert record.conversation_context is None
-    assert record.turn_record_version == "0.2"
+    assert record.retrieval_accounting is None
+    assert record.turn_record_version == "0.3"
     assert record.turn_record_version == TURN_RECORD_VERSION
 
 
@@ -737,6 +740,8 @@ def test_t18_21_public_exports_are_exact_and_closed():
         # TR-A1 (docs/ION_PHASE2_CONVERSATION_CONTEXT_AMENDMENT_v1.md)
         "ConversationContextBinding",
         "PriorTurnBinding",
+        # TR-A2 (OP-DEC-20261004-TW2-51)
+        "RetrievalAccountingBinding",
         "ExecutionProfileBinding",
         "GovernedEvidenceBinding",
         "ModelExecutionBinding",

@@ -72,12 +72,27 @@ from ..modules.turn_record import (
     materialize_turn_record,
 )
 from ..modules.voe_profile import VOERuntimeProfile
+from ..modules.retrieval.entity_lexical import detect_entities
 from .models import (
+    LEXICAL_STATUS_ADDED,
+    LEXICAL_STATUS_NO_MATCH,
+    LEXICAL_STATUS_NOT_TRIGGERED,
+    LEXICAL_STATUS_UNAVAILABLE,
+    RETRIEVAL_BRANCH_LEXICAL,
     AskResult,
     Evidence,
     IVEReport,
+    LexicalRetrievalOutcome,
     Metrics,
     ProviderMetrics,
+    RetrievalAccounting,
+)
+
+_LEXICAL_STATUSES = (
+    LEXICAL_STATUS_NOT_TRIGGERED,
+    LEXICAL_STATUS_ADDED,
+    LEXICAL_STATUS_NO_MATCH,
+    LEXICAL_STATUS_UNAVAILABLE,
 )
 from .ports import (
     ClockPort,
@@ -159,6 +174,47 @@ def _context_binding_kwargs(
     if conversation_context is None:
         return {}
     return {"conversation_context": conversation_context, "retrieval_query": retrieval_query}
+
+
+def _accounting_kwargs(retrieval_accounting: RetrievalAccounting | None) -> dict:
+    """TR-A2 argument for a Turn Record materializer — or none at all.
+
+    With the lexical branch disabled the materializer is called with exactly
+    the pre-TR-A2 arguments, so the dense-only closure is unchanged.
+    """
+    if retrieval_accounting is None:
+        return {}
+    return {"retrieval_accounting": retrieval_accounting}
+
+
+def _entity_lexical_enabled(settings) -> bool:
+    """TW2-51 switch. A settings object without the field is the OFF path."""
+    return getattr(settings, "entity_lexical_enabled", False) is True
+
+
+def _entity_lexical_max(settings) -> int:
+    return int(getattr(settings, "entity_lexical_max", 3))
+
+
+def _check_lexical_outcome(
+    outcome: LexicalRetrievalOutcome, dense_ids: tuple[str, ...], limit: int
+) -> None:
+    """Refuse a lexical outcome that breaks the TW2-51 contract (fail-safe)."""
+    if not isinstance(outcome, LexicalRetrievalOutcome):
+        raise TypeError("lexical branch returned an unexpected type")
+    if outcome.status not in _LEXICAL_STATUSES:
+        raise ValueError(f"unknown lexical status {outcome.status!r}")
+    added = tuple(outcome.evidence)
+    if len(added) > limit:
+        raise ValueError("lexical branch exceeded its cap")
+    if (outcome.status == LEXICAL_STATUS_ADDED) != bool(added):
+        raise ValueError("lexical status disagrees with its additions")
+    ids = [e.document_id for e in added]
+    if len(set(ids)) != len(ids) or set(ids) & set(dense_ids):
+        raise ValueError("lexical additions must be unique and not dense candidates")
+    for e in added:
+        if not isinstance(e, Evidence) or e.retrieval_branch != RETRIEVAL_BRANCH_LEXICAL:
+            raise ValueError("a lexical addition must be LEXICAL Evidence")
 
 
 def _completed_execution_bindings(
@@ -296,6 +352,8 @@ class Core:
         # rejected context is never recorded as one the turn ran with.
         bound_context: ConversationContext | None = None
         bound_retrieval_query: str | None = None
+        # TR-A2: set only when the lexical branch is enabled and retrieval ran.
+        retrieval_accounting: RetrievalAccounting | None = None
 
         # At most ONE Turn Record materialization per turn, success or failure.
         # This is what makes the mechanism non-recursive by construction: it is
@@ -355,6 +413,28 @@ class Core:
                 raise errors.RetrievalError(f"Retrieval failed: {exc}") from exc
             if not evidence:
                 raise errors.RetrievalError("Retrieval returned no evidence (no silent empty success).")
+
+            # --- optional entity lexical branch (OP-DEC-20261004-TW2-51) ---
+            # Disabled by default: with ENTITY_LEXICAL_ENABLED unset this block
+            # is skipped and `evidence` is exactly the dense result. Detection
+            # sees the CURRENT question `q` only — never `retrieval_query`, so
+            # a warm session's root question cannot trigger it. Added
+            # candidates only NOMINATE: they pass the Context Pack, governance,
+            # admission and the Model Context Builder like any dense candidate.
+            if _entity_lexical_enabled(self._settings):
+                dense_count = len(evidence)
+                lexical = self._run_lexical_branch(q, evidence)
+                evidence = evidence + list(lexical.evidence)
+                retrieval_accounting = RetrievalAccounting(
+                    dense_retrieved=dense_count,
+                    lexical_triggered=lexical.status != LEXICAL_STATUS_NOT_TRIGGERED,
+                    lexical_terms=tuple(lexical.terms),
+                    lexical_candidates=lexical.candidate_count,
+                    lexical_added_document_ids=tuple(e.document_id for e in lexical.evidence),
+                    lexical_cache_collection=lexical.cache_collection,
+                    lexical_cache_fingerprint=lexical.cache_fingerprint,
+                    lexical_status=lexical.status,
+                )
             retrieval_ms = self._clock.monotonic_ms() - t
             emit("retrieval", "done")
 
@@ -654,6 +734,7 @@ class Core:
                 comparison_latency_ms=None,
                 pipeline_latency_ms=total_ms,
                 **_context_binding_kwargs(bound_context, bound_retrieval_query),
+                **_accounting_kwargs(retrieval_accounting),
             )
 
             # Best-effort capture (OD22-11): an observer exception is
@@ -706,6 +787,7 @@ class Core:
                         comparison_latency_ms=comparison_ms,
                         pipeline_latency_ms=total_ms,
                         **_context_binding_kwargs(bound_context, bound_retrieval_query),
+                        **_accounting_kwargs(retrieval_accounting),
                     )
                     # Best-effort capture (OD22-11), same guarantee as the
                     # success path: invoked exactly once, only now that a real
@@ -726,6 +808,31 @@ class Core:
             raise
 
     # ----------------------------------------------------------------- #
+    def _run_lexical_branch(
+        self, question: str, dense: list[Evidence]
+    ) -> LexicalRetrievalOutcome:
+        """Run the optional lexical branch on the CURRENT question (TW2-51).
+
+        Never fails the turn: a retrieval port without the branch, an adapter
+        error, or an outcome that breaks the contract all degrade to
+        UNAVAILABLE with nothing added (or NOT_TRIGGERED when nothing was
+        detected), and dense retrieval stands exactly as returned.
+        """
+        dense_ids = tuple(e.document_id for e in dense)
+        limit = _entity_lexical_max(self._settings)
+        try:
+            method = getattr(self._retrieval, "lexical_candidates", None)
+            if method is None:
+                raise LookupError("the retrieval port exposes no lexical branch")
+            outcome = method(question, exclude_document_ids=dense_ids, limit=limit)
+            _check_lexical_outcome(outcome, dense_ids, limit)
+            return outcome
+        except Exception:
+            terms = tuple(t.full_form for t in detect_entities(question))
+            if not terms:
+                return LexicalRetrievalOutcome(status=LEXICAL_STATUS_NOT_TRIGGERED)
+            return LexicalRetrievalOutcome(status=LEXICAL_STATUS_UNAVAILABLE, terms=terms)
+
     def _materialize_governed_evidence(
         self, governance, evidence: list[Evidence], pack, question_id: str
     ) -> GovernedEvidenceSet:
@@ -837,6 +944,7 @@ class Core:
         pipeline_latency_ms: float,
         conversation_context: ConversationContext | None = None,
         retrieval_query: str | None = None,
+        retrieval_accounting: RetrievalAccounting | None = None,
     ) -> TurnRecord:
         """Record the closure of one COMPLETED turn.
 
@@ -896,6 +1004,7 @@ class Core:
             pipeline_latency_ms=pipeline_latency_ms,
             execution_profile=self._execution_profile_binding(),
             **_context_binding_kwargs(conversation_context, retrieval_query),
+            **_accounting_kwargs(retrieval_accounting),
         )
 
     def _enforce_citation_subset(self, report: IVEReport, model_input) -> None:
@@ -957,6 +1066,7 @@ class Core:
         pipeline_latency_ms: float | None,
         conversation_context: ConversationContext | None = None,
         retrieval_query: str | None = None,
+        retrieval_accounting: RetrievalAccounting | None = None,
     ) -> TurnRecord:
         """Record the closure of one FAILED turn, from facts already observed.
 
@@ -1002,6 +1112,7 @@ class Core:
             # truthfully records WHICH policy authorized that one attempt.
             execution_profile=self._execution_profile_binding(),
             **_context_binding_kwargs(conversation_context, retrieval_query),
+            **_accounting_kwargs(retrieval_accounting),
         )
 
     def _run_engine(

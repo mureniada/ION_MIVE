@@ -9,7 +9,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from .models import BlindedAnswer, ContextPack, EvaluationRecord, Evidence, IVEReport, MIVEResult
+from .models import (
+    BlindedAnswer,
+    ContextPack,
+    EvaluationRecord,
+    Evidence,
+    IVEReport,
+    LexicalRetrievalOutcome,
+    MIVEResult,
+)
 
 if TYPE_CHECKING:
     # Type-only: Core is wired to concrete engines exclusively through the
@@ -41,6 +49,24 @@ class RetrievalPort(Protocol):
     """
 
     def retrieve(self, question: str, top_k: int) -> list[Evidence]: ...
+
+
+@runtime_checkable
+class LexicalRetrievalPort(Protocol):
+    """OPTIONAL entity lexical branch (OP-DEC-20261004-TW2-51).
+
+    Separate from `retrieve()`, which stays the unchanged dense contract.
+    `question` is the CURRENT user question only — never the warm-session
+    retrieval query, prior model output or prior evidence. The branch only
+    NOMINATES candidates: each added one is materialized by point id from the
+    active collection and then passes the same governance and admission as a
+    dense candidate. It never raises for an unavailable lexical structure; it
+    reports `UNAVAILABLE` instead.
+    """
+
+    def lexical_candidates(
+        self, question: str, *, exclude_document_ids: tuple[str, ...], limit: int
+    ) -> LexicalRetrievalOutcome: ...
 
 
 @runtime_checkable

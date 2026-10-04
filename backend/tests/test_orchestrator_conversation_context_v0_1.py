@@ -229,7 +229,7 @@ def test_completed_context_turn_record_binds_context_verbatim(monkeypatch):
     core.ask("Tell me more", 3, conversation_context=ctx, on_turn_record=captured.append)
     [record] = captured
     binding = record.conversation_context
-    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_2"
+    assert record.turn_record_contract_id == "ION_TURN_RECORD_V0_3"
     assert record.question == "Tell me more"
     assert binding.context_sha256 == ctx.context_sha256
     assert binding.context_contract_id == "ION_CONVERSATION_CONTEXT_V0_2"
