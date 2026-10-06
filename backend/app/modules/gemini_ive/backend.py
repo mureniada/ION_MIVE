@@ -35,11 +35,18 @@ def usage_telemetry_line(label: str, model: str, usage_metadata, latency_ms: flo
 
 class GeminiBackend:
     def __init__(
-        self, model: str, *, api_key: str | None = None, telemetry_label: str = "gemini"
+        self,
+        model: str,
+        *,
+        api_key: str | None = None,
+        telemetry_label: str = "gemini",
+        thinking_budget: int | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key
         self._telemetry_label = telemetry_label
+        # E3 (VOE-LATENCY): None sends no thinking config (provider default).
+        self._thinking_budget = thinking_budget
         self._client = None
 
     def _ensure(self):
@@ -54,15 +61,20 @@ class GeminiBackend:
         client = self._ensure()
         from google.genai import types  # lazy
 
+        config_kwargs = dict(
+            system_instruction=system,
+            response_mime_type="application/json",
+            response_json_schema=schema,
+        )
+        if self._thinking_budget is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=self._thinking_budget
+            )
         started = time.monotonic()
         resp = client.models.generate_content(
             model=self._model,
             contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                response_mime_type="application/json",
-                response_json_schema=schema,
-            ),
+            config=types.GenerateContentConfig(**config_kwargs),
         )
         latency_ms = (time.monotonic() - started) * 1000.0
         text = getattr(resp, "text", "") or ""

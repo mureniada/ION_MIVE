@@ -147,7 +147,11 @@ def build_voe_composer(
     # `ExecutionProfile.__post_init__` and `_build_engines` above.
     engine_id = profile.engine_ids[0]
     if engine_id == "gemini":
-        backend = GeminiBackend(settings.gemini_model, telemetry_label="composer")
+        backend = GeminiBackend(
+            settings.gemini_model,
+            telemetry_label="composer",
+            thinking_budget=settings.voe_composer_thinking_budget,
+        )
         requested_model = settings.gemini_model
     elif engine_id == "openai":
         backend = OpenAIBackend(settings.openai_model)

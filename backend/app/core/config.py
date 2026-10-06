@@ -103,6 +103,26 @@ def _entity_lexical_max(value: str | None) -> int:
     return parsed
 
 
+def _composer_thinking_budget(value: str | None) -> int | None:
+    """E3 (VOE-LATENCY) composer-only Gemini thinking budget. Unset or empty
+    is None: no thinking config is sent, exactly as before. Otherwise an
+    integer within gemini-2.5-pro's accepted range (128..32768; thinking
+    cannot be disabled on 2.5 Pro)."""
+    if value is None or value.strip() == "":
+        return None
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        raise SettingsError(
+            f"VOE_COMPOSER_THINKING_BUDGET={value!r} is not an integer"
+        ) from None
+    if not 128 <= parsed <= 32768:
+        raise SettingsError(
+            f"VOE_COMPOSER_THINKING_BUDGET={value!r} must be within 128..32768"
+        )
+    return parsed
+
+
 @dataclass(frozen=True)
 class Settings:
     debug: bool
@@ -142,6 +162,9 @@ class Settings:
     # switch. `entity_lexical_max` caps lexical additions per turn (L = 3).
     entity_lexical_enabled: bool = False
     entity_lexical_max: int = 3
+    # E3 (VOE-LATENCY) thinking budget for the VOE composer call only; the IVE
+    # call never receives it. None (unset) keeps the provider's default.
+    voe_composer_thinking_budget: int | None = None
 
     @staticmethod
     def load(env: dict[str, str] | None = None) -> "Settings":
@@ -167,6 +190,9 @@ class Settings:
                 e.get("ENTITY_LEXICAL_ENABLED")
             ),
             entity_lexical_max=_entity_lexical_max(e.get("ENTITY_LEXICAL_MAX")),
+            voe_composer_thinking_budget=_composer_thinking_budget(
+                e.get("VOE_COMPOSER_THINKING_BUDGET")
+            ),
         )
 
 
