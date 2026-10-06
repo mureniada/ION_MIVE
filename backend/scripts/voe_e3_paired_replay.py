@@ -71,6 +71,7 @@ class _ModelsTap:
 
 class _ClientTap:
     def __init__(self, client, label: str) -> None:
+        self._client = client
         self.models = _ModelsTap(client.models, label)
 
 
@@ -255,8 +256,8 @@ def main() -> None:
         "deployed_composer_thinking_budget": settings.voe_composer_thinking_budget,
         "budget_b": budget_b,
         "questions": len(questions),
-        "profile_version": runtime_profile.profile_version,
-        "fingerprint_ok": runtime_profile.runtime_behavioral_fingerprint_sha256 == EXPECTED_FINGERPRINT,
+        "profile_version": runtime_profile.binding.profile_version,
+        "fingerprint_ok": runtime_profile.binding.runtime_behavioral_fingerprint_sha256 == EXPECTED_FINGERPRINT,
         "system_instruction_sha256": system_sha,
         "system_instruction_ok": system_sha == EXPECTED_SYSTEM_SHA256,
     })
