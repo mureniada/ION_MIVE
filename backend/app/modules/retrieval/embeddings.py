@@ -12,11 +12,89 @@ cost money; retrieval can stay fully local.
 from __future__ import annotations
 
 import hashlib
+import math
+import os
 import re
+import sys
 
 import numpy as np
 
 _TOKEN = re.compile(r"[a-z0-9]+")
+
+# E1 (VOE-LATENCY): PyTorch sizes its intra-op pool from the host's visible
+# CPUs, not the container's cgroup quota. On staging that is 48 threads under an
+# 8-CPU quota, which throttles a single query encode from ~9 ms to ~3 s. The cap
+# changes only how many threads compute the SAME vector (bitwise identical at
+# N=8 in the E1 A/B); model, tokenizer, precision and inputs are untouched.
+EMBEDDING_NUM_THREADS_ENV = "EMBEDDING_NUM_THREADS"
+_CGROUP_CPU_MAX = "/sys/fs/cgroup/cpu.max"
+
+
+def cgroup_cpu_quota(cpu_max_path: str = _CGROUP_CPU_MAX) -> int | None:
+    """Whole CPUs granted by a cgroup v2 `cpu.max` ("<quota> <period>"),
+    rounded up; None when the file is absent, unparsable, or "max" (unlimited)."""
+    try:
+        fields = open(cpu_max_path, encoding="ascii").read().split()
+    except OSError:
+        return None
+    if len(fields) != 2 or fields[0] == "max":
+        return None
+    try:
+        quota, period = int(fields[0]), int(fields[1])
+    except ValueError:
+        return None
+    if quota <= 0 or period <= 0:
+        return None
+    return max(1, math.ceil(quota / period))
+
+
+def resolve_embedding_threads(
+    env=None, cpu_max_path: str = _CGROUP_CPU_MAX, cpu_count: int | None = None
+) -> tuple[int | None, str]:
+    """Intra-op thread count for local embedding, and where it came from.
+
+    1. A valid `EMBEDDING_NUM_THREADS` (integer >= 1) wins: source "override".
+    2. Otherwise the cgroup quota, capped at the visible CPU count: "cgroup".
+       An invalid override is ignored here (source "cgroup-invalid-override")
+       rather than failing retrieval: it is a performance knob, not a gate.
+    3. No finite quota: None ("unchanged") -- PyTorch keeps its own default.
+    """
+    env = os.environ if env is None else env
+    raw = (env.get(EMBEDDING_NUM_THREADS_ENV) or "").strip()
+    invalid_override = False
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value >= 1:
+            return value, "override"
+        invalid_override = True
+
+    quota = cgroup_cpu_quota(cpu_max_path)
+    if quota is None:
+        return None, "unchanged-invalid-override" if invalid_override else "unchanged"
+    visible = os.cpu_count() if cpu_count is None else cpu_count
+    if visible:
+        quota = min(quota, visible)
+    return quota, "cgroup-invalid-override" if invalid_override else "cgroup"
+
+
+def _apply_embedding_threads() -> None:
+    """Set PyTorch's process-wide intra-op thread count once, before the first
+    model load, and log the outcome once. Inter-op threads are left as they are."""
+    import torch  # lazy: sentence-transformers already depends on it
+
+    threads, source = resolve_embedding_threads()
+    if threads is not None:
+        torch.set_num_threads(threads)
+    print(
+        f"[embedding] intra_op_threads={torch.get_num_threads()} source={source} "
+        f"interop_threads={torch.get_num_interop_threads()} "
+        f"cgroup_quota={cgroup_cpu_quota()} visible_cpus={os.cpu_count()}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _tokens(text: str) -> list[str]:
@@ -61,6 +139,7 @@ class LocalEmbedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer  # lazy
 
+            _apply_embedding_threads()
             self._model = SentenceTransformer(self._model_name)
             self._dim = int(self._model.get_sentence_embedding_dimension())
         return self._model
