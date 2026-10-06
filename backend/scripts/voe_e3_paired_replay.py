@@ -233,7 +233,9 @@ def main() -> None:
     from scripts.voe_g6_l1_offline_eval import run_detectors
 
     questions = json.loads(os.environ["E3_QUESTIONS_JSON"])
-    budget_b = int(os.environ.get("E3_BUDGET_B", "512"))
+    raw_budget_b = os.environ.get("E3_BUDGET_B", "512").strip()
+    # "none" runs a default-vs-default calibration pass (detector noise floor).
+    budget_b = None if raw_budget_b.lower() == "none" else int(raw_budget_b)
     install_tap(gbm)
 
     settings = Settings.load()
