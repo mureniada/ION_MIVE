@@ -89,7 +89,8 @@ def _build_engines(profile: ExecutionProfile, settings: Settings) -> dict:
     for engine_id in profile.engine_ids:
         if engine_id == "gemini":
             engine = GeminiIVE(
-                GeminiBackend(settings.gemini_model), model=settings.gemini_model
+                GeminiBackend(settings.gemini_model, telemetry_label="ive"),
+                model=settings.gemini_model,
             )
         elif engine_id == "openai":
             engine = OpenAIIVE(
@@ -146,7 +147,7 @@ def build_voe_composer(
     # `ExecutionProfile.__post_init__` and `_build_engines` above.
     engine_id = profile.engine_ids[0]
     if engine_id == "gemini":
-        backend = GeminiBackend(settings.gemini_model)
+        backend = GeminiBackend(settings.gemini_model, telemetry_label="composer")
         requested_model = settings.gemini_model
     elif engine_id == "openai":
         backend = OpenAIBackend(settings.openai_model)
