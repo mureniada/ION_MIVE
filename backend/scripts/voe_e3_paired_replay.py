@@ -37,8 +37,8 @@ USAGE = (
     ("cached_tokens", "cached_content_token_count"),
     ("total_tokens", "total_token_count"),
 )
-EXPECTED_SYSTEM_SHA256 = "46a5cd85f357b5ddddbfaef861c99cd754c9a9e4720c49d7c39a0618e7cad5de"
-EXPECTED_FINGERPRINT = "e9966bd07fe723b68e6d10112ffa8651983649c255859fd95d55abd9a90fbbee"
+EXPECTED_SYSTEM_SHA256 = "eba5b8c80c2646bb534c3cb33da1ea3287d2f2b3bb16a74a8ec91bdf19fc0e64"
+EXPECTED_FINGERPRINT = "ba22801ecb6a895ec833ca4ecdac146f49aa7cc2de2b039152f556f8213995b7"
 
 CALLS: list[dict] = []
 
