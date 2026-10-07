@@ -1,12 +1,15 @@
 # H1 live A/B (C3/R4): preregistration
 
-Prepared 2026-10-07 for David's "H1 LIVE A/B — PREPARE ONLY, DO NOT EXECUTE" (18:31Z). **Not executed.** No provider call, no staging change and no deploy were made to prepare it.
+Prepared 2026-10-07 for David's "H1 LIVE A/B — PREPARE ONLY, DO NOT EXECUTE" (18:31Z). Finalized for David's "OPERATOR DECISION — H1 PREREG FINALIZATION" (20:59Z) and his cap decision (21:04Z). **Not executed.** No provider call, no staging change and no deploy were made to prepare it.
+
+> **STATUS 2026-10-07 21:13Z: H1 LIVE EXPERIMENT = DEFERRED / NOT PURSUED (David). Not a FAIL. This draft is preserved unfrozen; the section 8 operating-characteristics table was never completed. H1 may be reopened later.**
 
 Labels used throughout: **VERIFIED** (checked in code, data or a live source, with the source named), **INFERRED**, **ESTIMATED**, **UNKNOWN**, and **PROPOSED** (a choice that waits for David's approval).
 
 ## 1. Status and authority
 
-- **Operator decisions (David, 18:31Z):** the candidate cap is C3/R4; the mechanism is the structured-output schema `maxItems` only; arm A is the unchanged v0.4 IVE schema; no new prompt instruction; the IVE prompt is identical in both arms; same frozen 27-question set; same retrieval and Context Pack per pair; model `gemini-2.5-pro` unchanged; IVE thinking unchanged; sequential paired execution with a predetermined alternating AB/BA order; 0 composer calls; 3 passes × 27 questions = 81 paired rows; the frozen provider-aware classification and whole-pair replacement are reused; the recommended latency threshold is a median improvement of at least 0.5 s.
+- **Operator decisions (David, 18:31Z):** the candidate cap is C3/R4; the mechanism is the structured-output schema `maxItems` only; arm A is the unchanged v0.4 IVE schema; no new prompt instruction; the IVE prompt is identical in both arms; same frozen 27-question set; same retrieval and Context Pack per pair; model `gemini-2.5-pro` unchanged; IVE thinking unchanged; sequential paired execution with a predetermined alternating AB/BA order; 0 composer calls; the frozen provider-aware classification and whole-pair replacement are reused.
+- **Operator decisions (David, 20:59Z and 21:04Z), superseding the 18:31Z pass count and latency rule:** 6 passes × 27 questions = **162 paired rows**; the quality margins of section 8; the latency rule of section 10 (mean improvement ≥ 0.5 s **and** a one-sided 95% cluster-bootstrap lower bound > 0); an IVE call cap of **648** (section 4).
 - **Proposals in this document** are marked PROPOSED and are listed in section 18. They take effect only when David approves this file.
 - **Freeze:** once approved, this file's sha256 is the frozen identity. The harness refuses to start unless `H1AB_PREREG_SHA256` equals the sha256 of the file it is given (section 17).
 - **Execution** needs a separate GO. The run is never retried, relaunched or run as a second instance.
@@ -46,11 +49,11 @@ This experiment is the first measurement of what the model actually does under t
 ## 4. Design and order
 
 - **Where:** inside the ION_MIVE staging container, deployment `2c91c45e-997c-4d8f-80e7-83be99e9b0af` (code `e6880e7`), in a new directory `/tmp/h1ab/`. This is the same path as H1 Step 0. `/tmp/h1cap/` is not touched.
-- **Programme:** 3 sequential passes over the frozen 27-question set (sha256 `b6a414cd…b833`). That makes 81 scheduled slots, one pair per slot.
+- **Programme:** 6 sequential passes over the frozen 27-question set (sha256 `b6a414cd…b833`). That makes 162 scheduled slots, one pair per slot.
 - **One turn per pair.** Each slot runs one normal `Core.ask(question)`, so retrieval and the Context Pack run once. Inside that turn, a wrapper on `GeminiBackend.generate` makes the IVE call twice, once per arm, with the identical system and user prompt objects. Both arms therefore receive the same retrieval and Context Pack by construction.
-- **Order (PROPOSED reading of "predetermined alternating AB/BA"):** the 81 slots alternate AB, BA, AB, … in run order.
+- **Order (PROPOSED reading of "predetermined alternating AB/BA"):** the 162 slots alternate AB, BA, AB, … in run order.
   - Slot = (pass − 1) × 27 + index; AB when the slot is even, BA when it is odd.
-  - With 27 questions, every question meets both orders across the three passes: 41 AB and 40 BA.
+  - With 27 questions, each question's order flips from pass to pass: every question runs AB 3 times and BA 3 times (81 AB and 81 BA in all).
   - A replacement keeps its slot's order.
   - Single source: `h1_ab_score.expected_order`. A start check verifies the alternation and balance (`order_alternates_and_balances`).
 - **The turn is the unchanged baseline turn.** Arm A's result, or arm A's exception, goes back to the Core. Arm B's output never reaches the Core.
@@ -63,7 +66,7 @@ This experiment is the first measurement of what the model actually does under t
   - any Gemini call whose backend label is not `ive`;
   - a second IVE `generate()` in one turn;
   - an IVE call whose schema is not the module's schema object;
-  - any IVE call beyond **324**. That is 81 slots × 2 attempts × 2 arms, the most the frozen replacement logic can ever make.
+  - any IVE call beyond **648**. That is 162 slots × 2 attempts × 2 arms, the most the frozen replacement logic can ever make (David, 21:04Z). A run without replacements makes 324 calls.
 - **Recorded per arm:**
   - input digests (system, user, schema);
   - the frozen E3 tap row (usage, SDK latency, sanitized error, thinking config sent);
@@ -73,8 +76,8 @@ This experiment is the first measurement of what the model actually does under t
 - **Recorded per pair:** the admitted evidence ids (`model_input.evidence[*].candidate_id`).
 - **Cost and time (ESTIMATED from the 81 unchanged Phase A IVE calls; pricing verified 2026-10-06):**
   - Phase A per-call means: 1,133 input, 1,352 visible and 1,687 thinking tokens. That is about $0.032 per call.
-  - 162 calls: about **$5.15**. At most about $10.31 at the 324-call cap.
-  - Run time: about **67 minutes** (2 × 24.4 s per pair plus about 1 s), plus 30 s per replacement.
+  - 324 calls: about **$10.3**. Each replacement adds 2 calls (about $0.06); at most about $20.6 at the 648-call cap.
+  - Run time: about **2.2 hours** (162 × (2 × 24.4 s + about 1 s)), plus 30 s per replacement.
 
 ## 5. Provider faults, whole-pair replacement and the scored set (frozen)
 
@@ -103,7 +106,7 @@ This experiment is the first measurement of what the model actually does under t
 3. **S1 (frozen F1):** a turn-level failure that is not a PROVIDER_FAULT, including arm A's own invalid output → `INCONCLUSIVE_IVE_OR_TURN_NON_PROVIDER_FAILURE`. Arm A is the unchanged system, so such a failure means the baseline itself failed.
 4. **S2 (frozen F2):** HTTP 402 on any call → `STOPPED_HTTP_402`, with no billing or credential change. A 402 on arm A fails the turn, so the frozen F1-before-F2 order reports it as S1. The ledger keeps the 402, and the verdict treats both cases the same way (section 12).
 5. **S3 (frozen F3):** 3 consecutive PROVIDER_FAULT calls, or 4 within 20 consecutive calls, over the ordered call sequence → `INCONCLUSIVE_PROVIDER_HEALTH`.
-6. **S4 (PROPOSED, new):** 3 consecutive scored pairs that each carry a hard-fail event (section 7) → `STOPPED_SYSTEMATIC_B_HARD_FAIL`. If the server rejects or ignores the caps, the run then ends after about 6 IVE calls (about $0.19) instead of 162.
+6. **S4 (PROPOSED, new):** 3 consecutive scored pairs that each carry a hard-fail event (section 7) → `STOPPED_SYSTEMATIC_B_HARD_FAIL`. If the server rejects or ignores the caps, the run then ends after about 6 IVE calls (about $0.19) instead of 324.
 
 ## 7. Hard FAIL gate (G1–G3)
 
@@ -137,14 +140,16 @@ Hard-fail events are evaluated only for scored pairs in which **arm A succeeded*
 
 All endpoints are differences B − A, over scored pairs where both arms succeeded. The resampling unit is the question (27 clusters).
 
-| Endpoint | Measure | Test | Margin (PROPOSED) |
+Margins: operator decision (David, 20:59Z), calibrated for 162 pairs against unchanged-vs-unchanged noise (`VOE_LATENCY_H1_RULE_CALIBRATION.md`). Each is the narrowest margin that an unchanged system passes at least about 95% of the time.
+
+| Endpoint | Measure | Test | Margin |
 |---|---|---|---|
-| Claim count | mean B − A claims per report | noninferiority | 0.5 claims |
-| Evidence coverage | mean B − A share of the turn's admitted evidence ids cited by claims | noninferiority | 0.05 |
-| Claim content | per question: mean cross-arm claim-statement similarity minus mean within-A similarity (across passes) | noninferiority | 0.10 |
-| Uncertainty count | mean B − A uncertainty items per report | noninferiority | 0.25 items |
-| Uncertainty content | as claim content, on the uncertainty items | noninferiority | 0.10 |
-| Overall confidence | mean B − A report confidence | equivalence | ± 0.05 |
+| Claim count | mean B − A claims per report | noninferiority | 0.35 claims |
+| Evidence coverage | mean B − A share of the turn's admitted evidence ids cited by claims | noninferiority | 0.035 |
+| Claim content | per question: mean cross-arm claim-statement similarity minus mean within-A similarity (across passes) | noninferiority | 0.03 |
+| Uncertainty count | mean B − A uncertainty items per report | noninferiority | 0.30 items |
+| Uncertainty content | as claim content, on the uncertainty items | noninferiority | 0.09 |
+| Overall confidence | mean B − A report confidence | equivalence | ± 0.015 |
 
 **States:**
 
@@ -159,16 +164,13 @@ All endpoints are differences B − A, over scored pairs where both arms succeed
 
 **Similarity** is the symmetric mean best-match token Jaccard over casefolded word tokens. It is a lexical proxy for semantic equivalence; there is no embedding model and no LLM judge, because no provider calls are allowed. Subtracting the within-A similarity removes the IVE's own run-to-run rewording.
 
-**Noise and chance to show noninferiority if the cap truly changes nothing (ESTIMATED, normal approximation).** Source: within-question variability of the 81 unchanged Phase A IVE calls (3 passes × 27; `e3pa_ive_sizing.csv`, sha256 `892e9e49…dd21`). Reproduced by `h1_ab_sizing.py`; output `h1_ab_sizing.json`, sha256 `a218f69e…c904`.
+**Operating characteristics at 162 pairs (ESTIMATED, null simulation on stored unchanged data, 0 provider calls).** "Unchanged PASS" is the chance that an unchanged system shows the margin; an unchanged system was never scored INFERIOR or DIVERGENT, so noise alone gives NOT_SHOWN, not FAIL. "Drop passed 50%" is the true per-report drop that still passes half the time; a drop equal to the margin passes about 3.5–4% of the time (bootstrap undercoverage with 27 clusters).
 
-| Endpoint | Within-question SD | 95% CI half-width (81 pairs) | Chance |
-|---|---|---|---|
-| Claim count | 0.68 | 0.21 | about 99.6% |
-| Uncertainty count | 0.75 | 0.23 | about 57% at 0.25; 73% at 0.30; 85% at 0.35 |
-| Uncertainty characters | 118 | 36 | (warning only) |
-| Coverage, content, confidence | UNKNOWN (no prior multi-pass data) | UNKNOWN | UNKNOWN |
+(Not completed: H1 was deferred at 21:13Z before the 162-pair content and confidence confirmation. The 162-pair figures for the count endpoints are in `VOE_LATENCY_H1_RULE_CALIBRATION.md` section 2.2.)
 
-A real drop of 0.25 uncertainty items per report would still show noninferiority about 2.5% of the time at margin 0.25, 6% at 0.30, and 13% at 0.35.
+Sources:
+- `h1_ab_calibration.py` / `h1_ab_calibration.json` (sha256 `44e1ebb0…a6cd`): 81 Phase A calls (`e3pa_ive_sizing.csv`, sha256 `892e9e49…dd21`), counts only, two noise models; two further independent implementations agree.
+- PC exact-scorer null simulation over 215 stored unchanged reports (`h1_rule_calibration.json`, sha256 `27c19416…9611`), 81 pairs.
 
 ## 9. Uncertainty warnings (W1–W4)
 
@@ -179,7 +181,7 @@ Uncertainty is user-visible. Any one of these makes the verdict WARNING, never P
 - **W3, emptied:** B has no uncertainty item where A has some in more pairs than the reverse, with an exact two-sided sign test p < 0.05.
 - **W4, flattened:** the 95% CI of the cross-arm minus within-A uncertainty similarity lies entirely below 0.
 
-ESTIMATED false-warning rate if the cap changes nothing: at most about 10% (four correlated one-sided 2.5% tails).
+ESTIMATED false-warning rate if the cap changes nothing (null simulation on the 215 stored unchanged reports): W1 3.2%, W2 4.6%, W3 1.3%, W4 2.6%; any warning 9.7%. These rates stay near their nominal levels at any sample size.
 
 ## 10. Latency and tokens
 
@@ -187,28 +189,29 @@ ESTIMATED false-warning rate if the cap changes nothing: at most about 10% (four
 - **Reported:**
   - A and B p50 and p90, with the full distributions;
   - the paired B − A distribution;
-  - the median improvement, median(A − B), with its 95% CI;
-  - the median improvement by order (AB vs BA);
+  - the mean improvement, mean(A − B), with its one-sided 95% lower bound (the rule's statistic);
+  - report-only: the median improvement with its two-sided 95% CI, and the Hodges–Lehmann estimate (median of the Walsh averages);
+  - the mean and median improvement by order (AB vs BA);
   - visible tokens (`candidates_token_count`) and thinking tokens (`thoughts_token_count`) for A, B and B − A;
   - prompt and cached tokens per arm;
   - estimated cost per arm (ESTIMATED).
 - **Thinking change:** the cap is reported as changing thinking-token usage when the 95% CI of mean B − A thinking tokens excludes 0. This has no verdict effect.
-- **Materiality rule (David's 0.5 s threshold; the CI condition is PROPOSED):**
-  - MATERIAL when median(A − B) ≥ 500 ms and the 95% cluster-bootstrap CI of that median lies above 0;
-  - NOT_SHOWN when the median is ≥ 500 ms but the CI reaches 0;
-  - NOT_MATERIAL when the median is < 500 ms. The observed gain did not reach the threshold; this does not prove the true gain is below it.
-- **Operating characteristics (ESTIMATED).** Simulated by `h1_ab_sizing.py` from the 81 unchanged Phase A IVE latencies (within-question SD 3.1 s), with independent arms, 400 runs per row, seed 20261007:
+- **Materiality rule (operator decision, David 20:59Z):**
+  - MATERIAL when mean(A − B) ≥ 500 ms **and** the one-sided 95% cluster-bootstrap lower bound of that mean is > 0. The bound is the 5th percentile of the 10,000 bootstrap means (`LATENCY_LOWER_BOUND_LEVEL = 0.95`);
+  - NOT_SHOWN when the mean is ≥ 500 ms but the bound is ≤ 0;
+  - NOT_MATERIAL when the mean is < 500 ms. The observed gain did not reach the threshold; this does not prove the true gain is below it.
+  - The median and HL estimates have no verdict effect. On this data the median of the pair differences is lumpy and unstable; the mean is near-normal (latency excess kurtosis 0.26) and every pair above 30 s is already replaced (section 5).
+- **Operating characteristics at 162 pairs (ESTIMATED).** Null simulation from the stored unchanged IVE latencies (within-question SD 3.1–3.2 s), injected constant paired gains; ranges span four independent implementations and two noise models (`VOE_LATENCY_H1_RULE_CALIBRATION.md`):
 
-  | True median gain | Median ≥ 0.5 s alone | Median ≥ 0.5 s and CI above 0 |
-  |---|---|---|
-  | 0 | 20% | 4% |
-  | 0.5 s | 54% | 20% |
-  | 0.8 s (Step 0.5 estimate) | 73% | 31% |
-  | 1.2 s | 92% | 53% |
-  | 1.6 s | 97% | 75% |
-  | 2.0 s | 100% | 92% |
+  | True gain | P(MATERIAL) |
+  |---|---|
+  | 0 (false-positive rate) | 4–5% |
+  | 0.5 s | 40–44% (capped near 50%: 0.5 s is the threshold itself) |
+  | 0.8 s (Step 0.5 estimate) | 72–75% |
+  | 0.8 s, realistic C3/R4 profile (7 of 27 questions gain nothing) | 71–74% |
+  | 1.0 s | 87–89% |
 
-  Without the CI condition, a cap with no effect would be called material about 1 time in 5. With it, a true 0.8 s gain is shown about 1 time in 3. Adjacent calls share provider load, so the true pair noise may be lower and these figures pessimistic. That is INFERRED, not measured.
+  Noise was measured across days, while the A/B pairs adjacent calls; shared provider load (lag-1 ρ ≈ 0.15) would make these figures slightly conservative. That is INFERRED, not measured.
 - **Report-only, "gain at equal thinking":** the intercept of the least-squares line of the A − B latency on the A − B thinking tokens, with a cluster-bootstrap CI.
   - It isolates the visible-output mechanism. VERIFIED on the 81 Phase A calls: latency ≈ 1.44 s + 7.56 ms per output token, R² 0.89, residual SD 1.35 s; visible and thinking tokens cost about the same per token.
   - It has no verdict effect.
@@ -247,7 +250,7 @@ Abstract and highlights are report-only by design (PROPOSED). They are composer-
 
    Hard-fail pairs seen before the stop are reported.
 2. **FAIL (HARD_GATE):** any scored pair with a G1–G3 event, including an S4 stop.
-3. **INCONCLUSIVE (INCOMPLETE):** not all 81 slots ended scored or UNRESOLVED (a PENDING slot has not ended), or the ledger is damaged.
+3. **INCONCLUSIVE (INCOMPLETE):** not all 162 slots ended scored or UNRESOLVED (a PENDING slot has not ended), or the ledger is damaged.
 4. **FAIL (QUALITY):** any endpoint INFERIOR or DIVERGENT.
 5. **INCONCLUSIVE (NI_NOT_SHOWN):** any endpoint NOT_SHOWN or not evaluable.
 6. **WARNING (UNCERTAINTY):** any of W1–W4.
@@ -283,8 +286,8 @@ PASS is reached only when no hard-fail event occurred, every margin is shown, no
 
 | Item | sha256 or value |
 |---|---|
-| A/B harness `voe_h1_ab_harness.py` | `0ff6752c770729d63f28c3408058b6e712fe0d253723473cf2031ef21aa7acaa` |
-| Scorer `h1_ab_score.py` (pinned inside the harness) | `9a20742112a4299bb9d6c39dc445bf65322dce2da0bafa193155cec6ab46e8c7` |
+| A/B harness `voe_h1_ab_harness.py` | `99271d257d10bb09add273a36fba5a6a2e669d9628dceeb328905e24c50ae0df` |
+| Scorer `h1_ab_score.py` (pinned inside the harness) | `a118f307f5c155c404d2e1769ee99b189066b34dda188a148b2275a7f65e0ff7` |
 | Sizing `h1_ab_sizing.py` (offline; not used by the run) | `15b56584bf7844fea637dc542ba2873fb40d5950e8b2228899482dc0c41efd7a` |
 | Step 0 capture `voe_h1_ive_capture.py` | `4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7` |
 | Frozen E3 tap `voe_e3_paired_replay.py` | `1134c4f646c7c667d5d93c14d14bec07012be94096b7e492d92f25d2486865c7` |
@@ -336,20 +339,19 @@ The four source files equal deployed `e6880e7`: VERIFIED by the H1 Step 0.5 12-f
 - **Changes after approval:** any change to a margin, rule or file needs a new version of this file and a new approval, never after seeing data.
 - **Deviations** during a run are reported as deviations. The verdict rule does not change.
 
-## 18. Decisions needed from David before freezing
+## 18. Decisions
 
-1. **Margins (section 8):**
-   - claims 0.5;
-   - coverage 0.05;
-   - claim content 0.10;
-   - uncertainty count 0.25 (strict: about 57% chance to show noninferiority if nothing changes; 0.35 raises that to about 85% but lets a real 0.25-item drop pass about 13% of the time instead of 2.5%);
-   - uncertainty content 0.10;
-   - confidence ±0.05.
-2. **Latency rule (section 10):** David's median ≥ 0.5 s, plus the PROPOSED CI condition. Without the condition, a no-effect cap is called material about 20% of the time; with it, about 4%, but a true 0.8 s gain is shown only about 31% of the time.
-3. **S4 systematic-failure stop (section 6):** new; it stops the run after 3 consecutive hard-fail pairs.
-4. **Readings of the request:**
-   - G1–G3 apply only when A succeeded;
-   - an HTTP 402 is never a B failure;
-   - a transient non-provider failure on B is G1 (FAIL), while the same failure on A stops the run (INCONCLUSIVE); none was seen in 270 earlier calls (section 7);
-   - the AB/BA alternation follows run order;
-   - abstract and highlights are report-only.
+**Recorded (David):**
+
+1. 18:31Z: cap C3/R4 by schema `maxItems` only, and the design of sections 1–5.
+2. 20:59Z: 6 passes = 162 paired rows; the margins of section 8; the latency rule of section 10.
+3. 21:04Z: IVE call cap 648 (section 4).
+
+**PROPOSED readings carried in this file; they take effect when David approves the frozen file:**
+
+1. S4 systematic-failure stop (section 6): the run stops after 3 consecutive hard-fail pairs.
+2. G1–G3 apply only when A succeeded.
+3. An HTTP 402 is never a B failure.
+4. A transient non-provider failure on B is G1 (FAIL), while the same failure on A stops the run (INCONCLUSIVE). None was seen in 270 earlier calls (section 7).
+5. The AB/BA alternation follows run order.
+6. Abstract and highlights are report-only.
