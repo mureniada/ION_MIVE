@@ -163,7 +163,7 @@ def api_error(code, status):
     return genai_errors.APIError(code, {"error": {"code": code, "message": "scripted", "status": status}})
 
 
-def script_ok(e, n=81, *, start=0):
+def script_ok(e, n=162, *, start=0):
     e.provider.script["A"].extend(response(payload(i)) for i in range(start, start + n))
     e.provider.script["B"].extend(response(payload(i, concepts=3, relations=4), visible=1300)
                                   for i in range(start, start + n))
@@ -258,7 +258,7 @@ def expected_arm_sequence(keys):
     return seq
 
 
-ALL_KEYS = [(p, i) for p in (1, 2, 3) for i in range(27)]
+ALL_KEYS = [(p, i) for p in range(1, 7) for i in range(27)]
 
 
 # --------------------------------------------------------------------- #
@@ -281,6 +281,7 @@ def test_start_checks_pass_with_zero_provider_calls(e):
     d, checks, composer = wire(e)
     assert all(checks.values()), [k for k, v in checks.items() if not v]
     assert len([k for k in checks if k.startswith("s0_")]) == 19 and len(checks) == 19 + 18
+    assert checks["plan_162_pairs"] and e.hm.MAX_IVE_CALLS == e.scorer.SCHEDULED_PAIRS * 2 * 2 == 648
     assert e.provider.seen == [] and e.harness.CALLS == [] and e.cap.CAPTURES == [] and composer.calls == []
 
 
@@ -331,9 +332,10 @@ def test_build_deps_wiring_on_repo_code(e, monkeypatch, tmp_path):
     d, checks = e.hm.build_deps(env)
     assert sorted(k for k, v in checks.items() if not v) == [
         "s0_fingerprint_ok", "s0_profile_version", "s0_questions_sha256", "s0_system_instruction_ok"]
-    assert d.cap.MAX_IVE_CALLS == 324 and d.harness.CALLS == [] and e.provider.seen == []
+    assert d.cap.MAX_IVE_CALLS == 648 and d.harness.CALLS == [] and e.provider.seen == []
     meta = e.hm.build_meta(d, checks, "p")
-    assert meta["schema_b_sha256"] == e.scorer.EXPECTED_SCHEMA_B_SHA256 and meta["planned"]["pairs"] == 81
+    assert meta["schema_b_sha256"] == e.scorer.EXPECTED_SCHEMA_B_SHA256 and meta["planned"]["pairs"] == 162
+    assert meta["planned"]["passes"] == 6 and meta["planned"]["max_ive_calls"] == 648
 
 
 def test_dry_run_through_main_and_real_wiring_fails_closed_with_zero_calls(e, monkeypatch, capsys, tmp_path):
@@ -438,22 +440,22 @@ def test_wire_requests_differ_only_by_the_two_caps(e, monkeypatch):
         assert "thinkingConfig" not in b["body"]["generationConfig"]
 
 
-def test_full_run_81_pairs_two_ive_calls_each_and_no_composer(e, tmp_path):
+def test_full_run_162_pairs_two_ive_calls_each_and_no_composer(e, tmp_path):
     import app.modules.ive_common as ic
 
     script_ok(e)
     d, checks, composer = wire(e)
     S, parsed, ledger = run(e, d, checks, tmp_path)
-    assert S["status"] == "COMPLETE" and S["scored_pairs"] == 81 and S["replacements"] == 0
-    assert S["provider_calls"] == 162 and S["ive_calls_attempted"] == 162 and S["hard_fail_pairs"] == 0
-    assert [t for t, _ in parsed] == ["H1AB_META"] + ["H1AB_ATTEMPT"] * 81 + ["H1AB_SUMMARY"]
+    assert S["status"] == "COMPLETE" and S["scored_pairs"] == 162 and S["replacements"] == 0
+    assert S["provider_calls"] == 324 and S["ive_calls_attempted"] == 324 and S["hard_fail_pairs"] == 0
+    assert [t for t, _ in parsed] == ["H1AB_META"] + ["H1AB_ATTEMPT"] * 162 + ["H1AB_SUMMARY"]
     assert parsed[0][1]["composer_detached"] is True and composer.calls == [] and d.core._composer is None
     seen = e.provider.seen
     assert [s["arm"] for s in seen] == expected_arm_sequence(ALL_KEYS)
     orders = [att["order"] for att in attempts(parsed)]
-    assert orders[26:29] == ["AB", "BA", "AB"] and orders.count("AB") == 41    # pass 2 starts with BA
+    assert orders[26:29] == ["AB", "BA", "AB"] and orders.count("AB") == orders.count("BA") == 81  # pass 2 starts BA
     schema_b = e.scorer.schema_b_from(ic.IVE_RESPONSE_SCHEMA)
-    for k in range(0, 162, 2):
+    for k in range(0, 324, 2):
         x, y = seen[k], seen[k + 1]
         assert x["contents"] == y["contents"] and x["model"] == y["model"] == MODEL
         assert x["config"].system_instruction == y["config"].system_instruction == ic.IVE_SYSTEM_PROMPT
@@ -476,7 +478,8 @@ def test_full_run_81_pairs_two_ive_calls_each_and_no_composer(e, tmp_path):
     # the offline scorer reads this ledger as written
     r = e.scorer.score(ledger)
     assert r["integrity"]["ok"] and r["run"]["complete"] and r["hard_fail"]["pairs"] == 0
-    assert r["latency"]["median_improvement_ms"] == 1000.0 and r["latency"]["state"] == "MATERIAL"
+    assert r["latency"]["mean_improvement_ms"] == 1000.0 and r["latency"]["state"] == "MATERIAL"
+    assert r["latency"]["median_improvement_ms"] == 1000.0
     assert r["verdict"] == {"label": "PASS", "step": 7}
 
 
@@ -496,24 +499,24 @@ def test_the_turn_is_the_unchanged_baseline_turn(e):
 # provider faults: frozen classification and whole-pair replacement
 # --------------------------------------------------------------------- #
 def test_b_provider_fault_replaces_the_whole_pair_after_30_s(e, tmp_path):
-    script_ok(e, 82)
+    script_ok(e, 163)
     e.provider.script["B"][0] = api_error(503, "UNAVAILABLE")
     d, checks, _ = wire(e)
     S, parsed, ledger = run(e, d, checks, tmp_path)
     atts = attempts(parsed)
-    assert S["status"] == "COMPLETE" and S["replacements"] == 1 and S["scored_pairs"] == 81
-    assert e.sleeps == [30.0] and S["provider_calls"] == 164
+    assert S["status"] == "COMPLETE" and S["replacements"] == 1 and S["scored_pairs"] == 162
+    assert e.sleeps == [30.0] and S["provider_calls"] == 326
     assert atts[0]["invalidated"] is True and atts[1]["kind"] == "replacement" and atts[1]["order"] == "AB"
     assert atts[0]["classification"]["arms"]["B"]["class_key"] == "HTTP|503|UNAVAILABLE"
     assert [f["who"] for f in S["provider_faults"]] == ["B"]
     assert [s["arm"] for s in e.provider.seen][:4] == ["A", "B", "A", "B"]
     r = e.scorer.score(ledger)
-    assert r["run"]["replacements"] == 1 and r["run"]["scored_pairs"] == 81 and r["integrity"]["ok"]
+    assert r["run"]["replacements"] == 1 and r["run"]["scored_pairs"] == 162 and r["integrity"]["ok"]
     assert r["run"]["provider_fault_calls_by_arm"] == {"A": 0, "B": 1}
 
 
 def test_a_provider_fault_fails_the_turn_and_replaces_the_pair(e, tmp_path):
-    script_ok(e, 82)
+    script_ok(e, 163)
     e.provider.script["A"][1] = api_error(429, "RESOURCE_EXHAUSTED")      # index 1 runs B first
     d, checks, _ = wire(e)
     S, parsed, _ = run(e, d, checks, tmp_path)
@@ -527,12 +530,12 @@ def test_a_provider_fault_fails_the_turn_and_replaces_the_pair(e, tmp_path):
 
 
 def test_a_second_fault_leaves_the_pair_unresolved(e, tmp_path):
-    script_ok(e, 82)
+    script_ok(e, 163)
     e.provider.script["B"][0] = httpx.ConnectError("no route")
     e.provider.script["B"][1] = api_error(500, "INTERNAL")
     d, checks, _ = wire(e)
     S, parsed, ledger = run(e, d, checks, tmp_path)
-    assert S["status"] == "COMPLETE" and S["unresolved"] == [{"pass": 1, "index": 0}] and S["scored_pairs"] == 80
+    assert S["status"] == "COMPLETE" and S["unresolved"] == [{"pass": 1, "index": 0}] and S["scored_pairs"] == 161
     assert [f["class_key"] for f in S["provider_faults"]] == ["TRANSPORT|httpx.ConnectError", "HTTP|500|INTERNAL"]
     r = e.scorer.score(ledger)
     assert r["run"]["unresolved"] == [{"pass": 1, "index": 0}] and r["run"]["complete"]
@@ -557,7 +560,7 @@ def test_provider_health_stops_the_run(e, tmp_path, faults, calls, unresolved, p
 
 
 def test_read_timeout_is_not_a_provider_fault(e, tmp_path):
-    script_ok(e, 81)
+    script_ok(e)
     e.provider.script["B"][5] = httpx.ReadTimeout("slow")
     d, checks, _ = wire(e)
     S, parsed, ledger = run(e, d, checks, tmp_path)
@@ -602,7 +605,7 @@ def test_http_402_stops_the_run(e, tmp_path, arm, status):
 
 
 def test_invalid_b_output_is_g1_and_the_run_continues(e, tmp_path):
-    script_ok(e, 81)
+    script_ok(e)
     e.provider.script["B"][7] = response('{"abstract": "cut off')
     d, checks, _ = wire(e)
     S, parsed, _ = run(e, d, checks, tmp_path)
@@ -624,7 +627,7 @@ def test_cap_not_honoured_is_g2_and_three_in_a_row_stop(e, tmp_path):
 
 
 def test_b_attribution_defects_are_g3_only_when_a_is_clean(e, tmp_path):
-    script_ok(e, 81)
+    script_ok(e)
     e.provider.script["B"][3] = response(payload(3, concepts=3, relations=4, rel_ids=("EV-9",)))
     e.provider.script["A"][4] = response(payload(4, rel_ids=("EV-9",)))
     e.provider.script["B"][4] = response(payload(4, concepts=3, relations=4, rel_ids=("EV-9",)))
@@ -664,7 +667,7 @@ def test_a_refused_b_call_is_a_guard_stop_not_a_b_failure(e, tmp_path):
 def test_a_lone_surrogate_in_model_output_is_recorded_and_scored(e, tmp_path):
     """Valid JSON can carry a lone UTF-16 surrogate escape (an emoji cut in half).
     The ledger is ASCII-escaped, so it can stop neither the run nor the scorer."""
-    script_ok(e, 81)
+    script_ok(e)
     pl = payload(1, concepts=3, relations=4)
     pl["abstract"] = "emoji cut \ud83d here"
     text = json.dumps(pl)
@@ -672,7 +675,7 @@ def test_a_lone_surrogate_in_model_output_is_recorded_and_scored(e, tmp_path):
     e.provider.script["B"][1] = response(text)
     d, checks, _ = wire(e)
     S, parsed, ledger = run(e, d, checks, tmp_path)
-    assert S["status"] == "COMPLETE" and S["scored_pairs"] == 81 and open(ledger, "rb").read().isascii()
+    assert S["status"] == "COMPLETE" and S["scored_pairs"] == 162 and open(ledger, "rb").read().isascii()
     att = attempts(parsed)[1]
     assert att["arms"]["B"]["status"] == "OK" and att["arms"]["B"]["report"]["abstract"] == "emoji cut \ud83d here"
     assert e.scorer.main(["score", ledger, str(tmp_path / "scored")]) == 0

@@ -12,7 +12,7 @@ construction:
     container. Composition is skipped in THIS process only (core._composer = None).
   * At the IVE call, a wrapper on GeminiBackend.generate makes TWO provider
     calls with the identical system and user prompt objects, in the
-    predetermined order (h1_ab_score.expected_order: the 81 scheduled pairs
+    predetermined order (h1_ab_score.expected_order: the 162 scheduled pairs
     alternate AB, BA, AB, ... in run order; a replacement keeps its slot's order):
         arm A: the unchanged module-level IVE_RESPONSE_SCHEMA object;
         arm B: a deep copy of it with only concepts.maxItems = 3 and
@@ -26,7 +26,7 @@ construction:
     classified by the same frozen rule. Arm A is normalized the same way and
     must equal the Core's own report (parity check).
   * Below the wrapper: the H1 Step 0 guard + capture (verbatim text, input
-    digests; IVE call cap raised to the structural maximum) and the frozen E3
+    digests; IVE call cap raised to the structural maximum of 648) and the frozen E3
     tap (usage, SDK latency, sanitized errors).
   * A pass-through recorder on GeminiIVE.run keeps the admitted evidence ids
     (model_input.evidence[*].candidate_id, the CG-A1 basis) and the question.
@@ -70,11 +70,11 @@ import sys
 import time
 from types import SimpleNamespace
 
-AB_VERSION = "h1-ab-c3r4-v1"
+AB_VERSION = "h1-ab-c3r4-v2"
 EXPECTED_CAPTURE_SHA256 = "4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7"
 EXPECTED_CLASSIFIER_SHA256 = "2b63a7e32d5d8dfe888d1eaf49103b566743dd1165319c76103e61ce524eecb6"
 EXPECTED_PA_SHA256 = "7f242c00e8014078bcc16f5abaf640dc0274e2214ac60bbb89043f2ea5b2207c"
-EXPECTED_SCORER_SHA256 = "9a20742112a4299bb9d6c39dc445bf65322dce2da0bafa193155cec6ab46e8c7"
+EXPECTED_SCORER_SHA256 = "a118f307f5c155c404d2e1769ee99b189066b34dda188a148b2275a7f65e0ff7"
 EXPECTED_IVE_SYSTEM_SHA256 = "6b7f7a6b6e66f88c69880ca0a780d367ca6375055050d4e0f3cf9e6ddcc883f6"
 # Deployed e6880e7 == repo (H1 Step 0.5, 12-file comparison).
 EXPECTED_SOURCE_SHA256 = {
@@ -84,8 +84,9 @@ EXPECTED_SOURCE_SHA256 = {
     "ive_common": "d9af7362dea0c56b0d74b3c83e63bddf2c31084118ea0559b2e67d0151a12819",
 }
 ADAPTER_CALL = "system=ic.IVE_SYSTEM_PROMPT, user=prompt, schema=ic.IVE_RESPONSE_SCHEMA"
-# 81 pairs x (primary + one replacement) x 2 arms: the most the frozen logic can ever make.
-MAX_IVE_CALLS = 324
+# 162 pairs x (primary + one replacement) x 2 arms: the most the frozen logic can ever make
+# (operator decision 2026-10-07 21:04Z). A run without replacements makes 324 calls.
+MAX_IVE_CALLS = 648
 
 ST_COMPLETE = "COMPLETE"
 ST_GUARD = "STOPPED_HARNESS_GUARD"
@@ -426,7 +427,7 @@ def stop_check(d, row: dict, c: dict, health):
 
 
 # ------------------------------------------------------------------ #
-# the programme: 3 passes x 27 questions, frozen whole-pair replacement
+# the programme: 6 passes x 27 questions, frozen whole-pair replacement
 # ------------------------------------------------------------------ #
 @dataclasses.dataclass
 class Deps:
@@ -554,7 +555,7 @@ def ab_start_checks(d: Deps) -> dict:
         "frozen_replacement_rule": d.pa.REPLACEMENT_WAIT_S == 30.0 and d.pa.HEALTH_CONSECUTIVE == 3
         and d.pa.HEALTH_WINDOW == 20 and d.pa.HEALTH_WINDOW_MAX == 4
         and d.pa.PF == d.runner.PROVIDER_FAULT,
-        "plan_81_pairs": d.scorer.PASSES * len(d.questions) == d.scorer.SCHEDULED_PAIRS == 81,
+        "plan_162_pairs": d.scorer.PASSES * len(d.questions) == d.scorer.SCHEDULED_PAIRS == 162,
         "order_alternates_and_balances": slots[:1] == ["AB"] and all(x != y for x, y in zip(slots, slots[1:]))
         and all({d.scorer.expected_order(p, i) for p in passes} == {"AB", "BA"} for i in n_q),
         "zero_provider_calls": len(d.harness.CALLS) == 0 and len(d.cap.CAPTURES) == 0,

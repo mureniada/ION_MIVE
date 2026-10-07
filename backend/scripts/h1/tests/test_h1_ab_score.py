@@ -90,16 +90,16 @@ def write_ledger(path, s, attempts, *, status="COMPLETE", summary=True):
         for a in attempts:
             fh.write("H1AB_ATTEMPT " + json.dumps(a) + "\n")
         if summary:
-            fh.write("H1AB_SUMMARY " + json.dumps({"status": status, "stop_reason": None, "provider_calls": 162,
+            fh.write("H1AB_SUMMARY " + json.dumps({"status": status, "stop_reason": None, "provider_calls": 324,
                                                    "provider_faults": []}) + "\n")
     return str(path)
 
 
 def full(s, *, b_payload=None, lat=None, b_text=None, b_status=None, seed=7):
-    """81 scored pairs. Defaults: B = A's content with the caps, B 1 s faster."""
+    """162 scored pairs (6 passes). Defaults: B = A's content with the caps, B 1 s faster."""
     rng = random.Random(seed)
     out = []
-    for p in (1, 2, 3):
+    for p in range(1, s.PASSES + 1):
         for i in range(27):
             a_pl = payload(i, p)
             b_pl = b_payload(i, p) if b_payload else payload(i, p, concepts=3, relations=4)
@@ -195,11 +195,28 @@ def test_similarity_measures(s):
 
 
 def test_order_alternates_in_run_order_and_every_question_meets_both(s):
-    slots = [s.expected_order(p, i) for p in (1, 2, 3) for i in range(27)]
+    passes = range(1, s.PASSES + 1)
+    slots = [s.expected_order(p, i) for p in passes for i in range(27)]
     assert slots[:3] == ["AB", "BA", "AB"] and all(x != y for x, y in zip(slots, slots[1:]))
-    assert slots.count("AB") == 41 and slots.count("BA") == 40
+    assert slots.count("AB") == 81 and slots.count("BA") == 81
     assert s.expected_order(2, 0) == "BA" and s.expected_order(3, 0) == "AB"
-    assert all({s.expected_order(p, i) for p in (1, 2, 3)} == {"AB", "BA"} for i in range(27))
+    # six passes: every question runs AB three times and BA three times
+    assert all([s.expected_order(p, i) for p in passes].count("AB") == 3 for i in range(27))
+
+
+def test_operator_decision_constants(s):
+    """Operator decision 2026-10-07 20:59Z: 6 passes, calibrated margins, mean latency rule."""
+    assert (s.PASSES, s.N_QUESTIONS, s.SCHEDULED_PAIRS) == (6, 27, 162)
+    assert (s.MARGIN_CLAIM_COUNT, s.MARGIN_EVIDENCE_COVERAGE, s.MARGIN_CLAIM_CONTENT, s.MARGIN_UNCERTAINTY_COUNT,
+            s.MARGIN_UNCERTAINTY_CONTENT, s.MARGIN_CONFIDENCE) == (0.35, 0.035, 0.03, 0.30, 0.09, 0.015)
+    assert (s.LATENCY_MATERIAL_MS, s.LATENCY_LOWER_BOUND_LEVEL, s.CI_LEVEL) == (500.0, 0.95, 0.95)
+    assert (s.SEED, s.RESAMPLES) == (20261006, 10_000)
+
+
+def test_hodges_lehmann(s):
+    assert s.hodges_lehmann([]) is None and s.hodges_lehmann([5.0]) == 5.0
+    assert s.hodges_lehmann([1.0, 2.0, 9.0]) == 3.5          # Walsh averages 1, 1.5, 2, 5, 5.5, 9
+    assert s.hodges_lehmann([0.0, 10.0, 10.0, 10.0, 1000.0]) == 10.0
 
 
 def test_gain_at_equal_thinking(s):
@@ -307,21 +324,23 @@ def test_scored_set_rules(s):
 # --------------------------------------------------------------------- #
 def test_pass_when_quality_holds_and_the_gain_is_material(s, tmp_path):
     r = scored(s, tmp_path, full(s))
-    assert r["integrity"]["ok"] and r["run"]["complete"] and r["run"]["scored_pairs"] == 81
+    assert r["integrity"]["ok"] and r["run"]["complete"] and r["run"]["scored_pairs"] == 162
     assert {k: v["state"] for k, v in r["endpoints"].items()} == {
         "claim_count": "NONINFERIOR", "evidence_coverage": "NONINFERIOR", "claim_content": "NONINFERIOR",
         "uncertainty_count": "NONINFERIOR", "uncertainty_content": "NONINFERIOR", "confidence": "EQUIVALENT"}
     assert not any(w["triggered"] for w in r["uncertainty_warnings"].values())
-    assert r["latency"]["state"] == "MATERIAL" and 800 < r["latency"]["median_improvement_ms"] < 1200
-    assert r["latency"]["median_improvement_ci95"][0] > 0
+    assert r["latency"]["state"] == "MATERIAL" and 800 < r["latency"]["mean_improvement_ms"] < 1200
+    assert r["latency"]["mean_improvement_lower_bound_one_sided_95"] > 0
+    assert 800 < r["latency"]["median_improvement_ms"] < 1200 and r["latency"]["median_improvement_ci95"][0] > 0
+    assert 800 < r["latency"]["hodges_lehmann_improvement_ms"] < 1200
     assert r["verdict"] == {"label": "PASS", "step": 7}
-    assert r["cap"]["b_max_items_violations"] == 0 and r["cap"]["a_over_cap_concepts"] == 81
+    assert r["cap"]["b_max_items_violations"] == 0 and r["cap"]["a_over_cap_concepts"] == 162
     assert r["tokens"]["visible"]["delta_b_minus_a"]["mean"] == -100
     assert r["tokens"]["thinking"]["delta_b_minus_a"]["changed"] is False
     lat = r["latency"]
     assert lat["delta_b_minus_a_ms"]["median"] == pytest.approx(-lat["median_improvement_ms"])
-    assert lat["gain_at_equal_thinking_ms"]["label"] == "REPORT_ONLY" and lat["gain_at_equal_thinking_ms"]["pairs"] == 81
-    assert set(lat["by_order_median_ms"]) == {"AB", "BA"}
+    assert lat["gain_at_equal_thinking_ms"]["label"] == "REPORT_ONLY" and lat["gain_at_equal_thinking_ms"]["pairs"] == 162
+    assert set(lat["by_order_median_ms"]) == set(lat["by_order_mean_ms"]) == {"AB", "BA"}
 
 
 def test_gain_at_equal_thinking_removes_a_thinking_shift(s, tmp_path):
@@ -335,7 +354,7 @@ def test_gain_at_equal_thinking_removes_a_thinking_shift(s, tmp_path):
     g = r["latency"]["gain_at_equal_thinking_ms"]
     assert g["estimate"] == pytest.approx(800) and g["ci95"] == [pytest.approx(800), pytest.approx(800)]
     assert r["tokens"]["thinking"]["delta_b_minus_a"]["mean"] == pytest.approx(
-        sum((k % 7 - 3) * 100 for k in range(81)) / 81)
+        sum((k % 7 - 3) * 100 for k in range(162)) / 162)
     assert r["verdict"]["step"] == 7          # report-only: the verdict still comes from the raw latency rule
 
 
@@ -345,16 +364,41 @@ def test_not_material_below_half_a_second(s, tmp_path):
 
 
 def test_latency_not_shown_when_questions_disagree(s, tmp_path):
-    # 14 questions 3 s faster in B, 13 questions 2 s slower: median 3 s, CI spans 0
+    # 14 questions 3 s faster in B, 13 questions 2 s slower: mean 593 ms, one-sided bound below 0
     r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (3000 if i < 14 else -2000)))
-    assert r["latency"]["median_improvement_ms"] == pytest.approx(3000)
-    assert r["latency"]["median_improvement_ci95"][0] <= 0 and r["latency"]["state"] == "NOT_SHOWN"
+    assert r["latency"]["mean_improvement_ms"] == pytest.approx((14 * 3000 - 13 * 2000) / 27)
+    assert r["latency"]["mean_improvement_lower_bound_one_sided_95"] <= 0 and r["latency"]["state"] == "NOT_SHOWN"
     assert r["verdict"] == {"label": "INCONCLUSIVE", "sub_reason": "LATENCY_NOT_SHOWN", "step": 7}
+
+
+def test_latency_rule_uses_the_mean_not_the_median(s, tmp_path):
+    # 15 questions 1 s faster, 12 questions 0.2 s slower: median 1 s but mean 467 ms
+    r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (1000 if i < 15 else -200)))
+    assert r["latency"]["median_improvement_ms"] == pytest.approx(1000)
+    assert r["latency"]["mean_improvement_ms"] == pytest.approx((15 * 1000 - 12 * 200) / 27)
+    assert r["latency"]["state"] == "NOT_MATERIAL" and r["verdict"]["label"] == "NOT_MATERIAL"
+
+
+def test_latency_lower_bound_is_one_sided_95(s, tmp_path):
+    """The rule's bound is the 5th percentile of the bootstrap means (one-sided 95%),
+    not the 2.5th. Shift-equivariance places a constant offset so that the
+    one-sided bound is above 0 while the two-sided 95% lower limit is not."""
+    base = [3000.0 if i < 14 else -2000.0 for i in range(27)]
+    clusters = [[g] * s.PASSES for g in base]
+    _, (q05, _) = s.cluster_bootstrap(clusters, s.mean, level=0.90)
+    _, (q025, _) = s.cluster_bootstrap(clusters, s.mean)
+    assert q025 < q05
+    shift = -(q025 + q05) / 2.0
+    r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (base[i] + shift)))
+    lat = r["latency"]
+    assert lat["mean_improvement_lower_bound_one_sided_95"] == pytest.approx(q05 + shift)
+    assert lat["mean_improvement_lower_bound_one_sided_95"] > 0 > q025 + shift
+    assert lat["mean_improvement_ms"] >= 500 and lat["state"] == "MATERIAL" and r["verdict"]["label"] == "PASS"
 
 
 def test_uncertainty_reduction_is_a_warning_not_a_success(s, tmp_path):
     def b_payload(i, p):
-        drop = (i + p) % 9 == 0          # 9 of 81 pairs lose one uncertainty item
+        drop = (i + p) % 9 == 0          # 18 of 162 pairs lose one uncertainty item
         return payload(i, p, concepts=3, relations=4, unc=1 if drop else 2)
 
     r = scored(s, tmp_path, full(s, b_payload=b_payload))
@@ -370,7 +414,7 @@ def test_emptied_uncertainty_triggers_the_sign_test(s, tmp_path):
 
     r = scored(s, tmp_path, full(s, b_payload=b_payload))
     w3 = r["uncertainty_warnings"]["W3_b_only_empty"]
-    assert w3["b_only_empty"] == 27 and w3["a_only_empty"] == 0 and w3["triggered"]
+    assert w3["b_only_empty"] == 54 and w3["a_only_empty"] == 0 and w3["triggered"]
     assert r["verdict"]["label"] in ("FAIL", "INCONCLUSIVE", "WARNING")
 
 
@@ -407,7 +451,7 @@ def test_hard_gate_beats_quality_and_latency(s, tmp_path):
 
 def test_b_failure_is_hard_gate_and_excluded_from_quality(s, tmp_path):
     r = scored(s, tmp_path, full(s, b_status=lambda i, p: "CALL_FAILED" if (i, p) == (5, 2) else "OK"))
-    assert r["excluded"]["b_failed_g1"] == [[2, 5]] and r["quality_pairs"] == 80
+    assert r["excluded"]["b_failed_g1"] == [[2, 5]] and r["quality_pairs"] == 161
     assert r["verdict"]["label"] == "FAIL" and r["verdict"]["codes"] == {"G1": 1}
 
 
@@ -464,7 +508,7 @@ def test_unresolved_pairs_do_not_make_the_run_incomplete(s, tmp_path):
     atts[10:11] = [pf, rep]
     r = scored(s, tmp_path, atts)
     assert r["run"]["unresolved"] == [{"pass": 1, "index": 10}] and r["run"]["complete"]
-    assert r["run"]["scored_pairs"] == 80 and r["verdict"]["label"] == "PASS"
+    assert r["run"]["scored_pairs"] == 161 and r["verdict"]["label"] == "PASS"
     # without its replacement the slot is pending and the run is not complete
     r = scored(s, tmp_path, atts[:11] + atts[12:])
     assert r["run"]["pending"] == [{"pass": 1, "index": 10}] and r["run"]["unresolved"] == []
@@ -498,7 +542,7 @@ def test_main_writes_new_files_only(s, tmp_path):
     assert s.main(["score", ledger, prefix]) == 0
     summary = json.load(open(prefix + "_summary.json", encoding="utf-8"))
     rows = list(csv.DictReader(open(prefix + "_pairs.csv", encoding="utf-8")))
-    assert summary["verdict"]["label"] == "PASS" and len(rows) == 81 and rows[0]["order"] == "AB"
+    assert summary["verdict"]["label"] == "PASS" and len(rows) == 162 and rows[0]["order"] == "AB"
     with pytest.raises(FileExistsError):
         s.main(["score", ledger, prefix])
     assert s.main(["nonsense"]) == 2

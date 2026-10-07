@@ -32,7 +32,7 @@ import random
 import re
 import sys
 
-SCORER_VERSION = "h1-ab-score-v1"
+SCORER_VERSION = "h1-ab-score-v2"
 
 # The unchanged v0.4 IVE provider schema (app.modules.ive_common.IVE_RESPONSE_SCHEMA,
 # repo and e6880e7: ive_common.py sha256 d9af7362...2819), canonical JSON.
@@ -56,7 +56,7 @@ EXPECTED_SCHEMA_A_SHA256 = "e4e577d629a3b7bc1309b22a45f6a698db2b747b403601e7cb1c
 CAP = {"concepts": 3, "relations": 4}
 EXPECTED_SCHEMA_B_SHA256 = "dbe6bc784763fc9b2a555b991209e4cc66bbbf52879794fae54c5b39a3a0074e"
 
-PASSES = 3
+PASSES = 6
 N_QUESTIONS = 27
 SCHEDULED_PAIRS = PASSES * N_QUESTIONS
 
@@ -64,14 +64,18 @@ SCHEDULED_PAIRS = PASSES * N_QUESTIONS
 SEED = 20261006
 RESAMPLES = 10_000
 CI_LEVEL = 0.95
-# Non-inferiority margins on B - A (PROPOSED in the prereg, frozen with it).
-MARGIN_CLAIM_COUNT = 0.5           # claims per report
-MARGIN_EVIDENCE_COVERAGE = 0.05    # share of the turn's admitted evidence ids cited by claims
-MARGIN_CLAIM_CONTENT = 0.10        # cross-arm minus within-A claim-statement similarity
-MARGIN_UNCERTAINTY_COUNT = 0.25    # uncertainty items per report
-MARGIN_UNCERTAINTY_CONTENT = 0.10  # cross-arm minus within-A uncertainty similarity
-MARGIN_CONFIDENCE = 0.05           # overall report confidence, two-sided equivalence
-LATENCY_MATERIAL_MS = 500.0        # operator's materiality threshold for the median gain
+# Non-inferiority margins on B - A (operator decision 2026-10-07 20:59Z, calibrated
+# for 162 pairs against unchanged-vs-unchanged noise; VOE_LATENCY_H1_RULE_CALIBRATION.md).
+MARGIN_CLAIM_COUNT = 0.35          # claims per report
+MARGIN_EVIDENCE_COVERAGE = 0.035   # share of the turn's admitted evidence ids cited by claims
+MARGIN_CLAIM_CONTENT = 0.03        # cross-arm minus within-A claim-statement similarity
+MARGIN_UNCERTAINTY_COUNT = 0.30    # uncertainty items per report
+MARGIN_UNCERTAINTY_CONTENT = 0.09  # cross-arm minus within-A uncertainty similarity
+MARGIN_CONFIDENCE = 0.015          # overall report confidence, two-sided equivalence
+# Latency rule (same decision): MATERIAL when mean(A - B) >= the threshold AND the
+# one-sided 95% cluster-bootstrap lower bound of that mean is above 0.
+LATENCY_MATERIAL_MS = 500.0        # operator's materiality threshold for the mean gain
+LATENCY_LOWER_BOUND_LEVEL = 0.95   # one-sided: the 5th percentile of the bootstrap means
 WARNING_SIGN_TEST_ALPHA = 0.05
 # Run-time stop S4 (PROPOSED): this many consecutive scored pairs with a hard-fail event.
 SYSTEMATIC_B_STOP = 3
@@ -387,6 +391,15 @@ def median(values: list):
     return quantile(sorted(values), 0.5)
 
 
+def hodges_lehmann(values: list):
+    """One-sample Hodges-Lehmann estimate: the median of the Walsh averages
+    (x_i + x_j) / 2 over i <= j."""
+    v = list(values)
+    if not v:
+        return None
+    return median([(v[i] + v[j]) / 2.0 for i in range(len(v)) for j in range(i, len(v))])
+
+
 def dist(values: list) -> dict:
     v = sorted(x for x in values if isinstance(x, (int, float)) and not isinstance(x, bool))
     if not v:
@@ -396,10 +409,13 @@ def dist(values: list) -> dict:
             "max": v[-1], "mean": sum(v) / len(v)}
 
 
-def cluster_bootstrap(clusters: list, stat, *, seed: int = SEED, resamples: int = RESAMPLES):
-    """Point estimate on the pooled values and a percentile CI from resampling
-    whole clusters (questions) with replacement. Each call seeds its own RNG,
-    so an endpoint's interval does not depend on the order endpoints run."""
+def cluster_bootstrap(clusters: list, stat, *, seed: int = SEED, resamples: int = RESAMPLES,
+                      level: float = CI_LEVEL):
+    """Point estimate on the pooled values and a two-sided percentile interval
+    at `level` from resampling whole clusters (questions) with replacement.
+    The lower end of the level-0.90 interval is the one-sided 95% lower bound.
+    Each call seeds its own RNG, so an endpoint's interval does not depend on
+    the order endpoints run."""
     clusters = [list(c) for c in clusters if c]
     if not clusters:
         return None, (None, None)
@@ -413,7 +429,7 @@ def cluster_bootstrap(clusters: list, stat, *, seed: int = SEED, resamples: int 
             sample.extend(clusters[rng.randrange(n)])
         stats.append(stat(sample))
     stats.sort()
-    tail = (1.0 - CI_LEVEL) / 2.0
+    tail = (1.0 - level) / 2.0
     return est, (quantile(stats, tail), quantile(stats, 1.0 - tail))
 
 
@@ -488,10 +504,10 @@ def read_ledger(path: str) -> dict:
 
 
 def expected_order(pass_no: int, index: int) -> str:
-    """Prereg section 4: the 81 scheduled pairs alternate AB, BA, AB, ... in run
+    """Prereg section 4: the 162 scheduled pairs alternate AB, BA, AB, ... in run
     order (slot = (pass - 1) * 27 + index), so with 27 questions every question
-    meets both orders across the three passes. A replacement keeps its slot's
-    order. The harness takes the order from here."""
+    alternates order from pass to pass: 3 AB and 3 BA over the six passes. A
+    replacement keeps its slot's order. The harness takes the order from here."""
     return "AB" if ((pass_no - 1) * N_QUESTIONS + index) % 2 == 0 else "BA"
 
 
@@ -704,15 +720,18 @@ def score(ledger_path: str) -> dict:
         ta, tb = _num(a["tap"].get("thoughts_tokens")), _num(b["tap"].get("thoughts_tokens"))
         if ta is not None and tb is not None:
             adj_clusters.setdefault(i, []).append((ta - tb, d))
-    med, med_ci = cluster_bootstrap([lat_clusters[i] for i in sorted(lat_clusters)], median)
-    if med is None:
+    lat_cl = [lat_clusters[i] for i in sorted(lat_clusters)]
+    mean_gain, (mean_lb, mean_ub) = cluster_bootstrap(lat_cl, mean, level=1.0 - 2.0 * (1.0 - LATENCY_LOWER_BOUND_LEVEL))
+    if mean_gain is None:
         lat_state = "NOT_EVALUABLE"
-    elif med >= LATENCY_MATERIAL_MS and med_ci[0] > 0:
+    elif mean_gain >= LATENCY_MATERIAL_MS and mean_lb > 0:
         lat_state = "MATERIAL"
-    elif med >= LATENCY_MATERIAL_MS:
+    elif mean_gain >= LATENCY_MATERIAL_MS:
         lat_state = "NOT_SHOWN"
     else:
         lat_state = "NOT_MATERIAL"
+    # secondary, report-only (prereg 10): the median gain with its two-sided 95% CI and the HL estimate
+    med, med_ci = cluster_bootstrap(lat_cl, median)
 
     def per_arm(field, arm):
         return [_num(v[arm]["tap"].get(field)) for v in lat.values()]
@@ -736,8 +755,14 @@ def score(ledger_path: str) -> dict:
         "a_ms": dist(per_arm("sdk_latency_ms", 0)), "b_ms": dist(per_arm("sdk_latency_ms", 1)),
         "delta_b_minus_a_ms": dist([-x for x in pooled_ab]),
         "delta_a_minus_b_ms": dist(pooled_ab),
+        "mean_improvement_ms": mean_gain, "mean_improvement_lower_bound_one_sided_95": mean_lb,
+        "mean_improvement_ci90": [mean_lb, mean_ub],
+        "threshold_ms": LATENCY_MATERIAL_MS, "rule": "mean(A-B) >= threshold AND one-sided 95% lower bound > 0",
+        "state": lat_state,
         "median_improvement_ms": med, "median_improvement_ci95": list(med_ci),
-        "threshold_ms": LATENCY_MATERIAL_MS, "state": lat_state,
+        "hodges_lehmann_improvement_ms": hodges_lehmann(pooled_ab),
+        "secondary_label": "REPORT_ONLY (median, its CI and the HL estimate have no verdict effect)",
+        "by_order_mean_ms": {o: mean(v) for o, v in by_order.items()},
         "by_order_median_ms": {o: median(v) for o, v in by_order.items()},
         # report-only (prereg 10): the gain left once the B-A thinking-token difference is regressed out
         "gain_at_equal_thinking_ms": {"label": "REPORT_ONLY", "estimate": adj_est, "ci95": list(adj_ci),
@@ -994,8 +1019,9 @@ def baseline(ledger_path: str) -> dict:
         "tool": "h1_ab_score baseline", "scorer_version": SCORER_VERSION,
         "ledger_sha256": sha256_file(ledger_path), "turns": len(turns), "reports": n,
         "rates": rates,
-        "chance_of_one_or_more_b_only_pairs_in_81_if_unchanged": {
-            "label": "ESTIMATED (independent arms at the Step 0 per-report rate)", **noise},
+        "chance_of_one_or_more_b_only_pairs_in_schedule_if_unchanged": {
+            "label": "ESTIMATED (independent arms at the Step 0 per-report rate)",
+            "scheduled_pairs": SCHEDULED_PAIRS, **noise},
         "a_over_cap": {"concepts_gt3": sum(1 for p in have if (p["raw_concepts"] or 0) > CAP["concepts"]),
                        "relations_gt4": sum(1 for p in have if (p["raw_relations"] or 0) > CAP["relations"])},
         "caveat": "Step 0 did not record the admitted evidence set: STRAY_RELATION_ID cannot be measured here.",
