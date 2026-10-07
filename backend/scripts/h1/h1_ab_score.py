@@ -315,7 +315,7 @@ def arm_view(arm, schema: dict, allowed) -> dict:
     if isinstance(text, str):
         try:
             raw = parse_like_app(text)
-        except ValueError:
+        except Exception:  # ValueError, or RecursionError on pathologically nested JSON
             violations = [("UNPARSEABLE", "/")]
         else:
             violations = schema_violations(raw, schema)
@@ -352,7 +352,8 @@ def pair_hard_fail_events(row: dict) -> list:
     if not a["ok"]:
         return []
     if not b["ok"]:
-        if b["http_status"] == 402:
+        # REFUSED / NOT_RUN / UNSCORED are harness states: the guard or capture stop decides those
+        if b["status"] not in ("CALL_FAILED", "INVALID_OUTPUT") or b["http_status"] == 402:
             return []
         return [{"code": "G1", "detail": f"B {b['status']}: {b['class_key']}"}]
     events = []
@@ -508,11 +509,13 @@ def _attempt_has_402(att: dict) -> bool:
 
 def scored_set(attempts: list) -> dict:
     """Prereg section 5: per scheduled (pass, index) the primary if it has no
-    PROVIDER_FAULT, else the replacement if it has none, else UNRESOLVED."""
+    PROVIDER_FAULT, else the replacement if it has none, else UNRESOLVED. A
+    faulted primary whose replacement never ran (the run stopped first) is
+    PENDING: neither scored nor unresolved, and the run is not complete."""
     by_key: dict = {}
     for att in attempts:
         by_key.setdefault((att.get("pass"), att.get("index")), []).append(att)
-    scored, unresolved, inconsistent = {}, [], []
+    scored, unresolved, pending, inconsistent = {}, [], [], []
     for key, atts in sorted(by_key.items(), key=lambda kv: (kv[0][0] or 0, kv[0][1] or 0)):
         kinds = [a.get("kind") for a in atts]
         if kinds not in (["primary"], ["primary", "replacement"]):
@@ -527,11 +530,13 @@ def scored_set(attempts: list) -> dict:
             if not has_pf:
                 chosen = a
                 break
-        if chosen is None:
-            unresolved.append({"pass": key[0], "index": key[1]})
-        else:
+        if chosen is not None:
             scored[key] = chosen
-    return {"scored": scored, "unresolved": unresolved, "inconsistent": inconsistent,
+        elif kinds == ["primary"]:
+            pending.append({"pass": key[0], "index": key[1]})
+        else:
+            unresolved.append({"pass": key[0], "index": key[1]})
+    return {"scored": scored, "unresolved": unresolved, "pending": pending, "inconsistent": inconsistent,
             "attempted_keys": sorted(by_key)}
 
 
@@ -608,12 +613,13 @@ def score(ledger_path: str) -> dict:
     for evs in hard_pairs.values():
         for e in evs:
             by_code[e["code"]] = by_code.get(e["code"], 0) + 1
-    excluded = {"only_a_failed": [], "both_failed": [], "b_failed_g1": []}
+    excluded = {"only_a_failed": [], "both_failed": [], "b_failed_g1": [], "b_failed_not_g1": []}
     for key, (a, b) in views.items():
         if not a["ok"]:
             excluded["both_failed" if not b["ok"] else "only_a_failed"].append(list(key))
         elif not b["ok"]:
-            excluded["b_failed_g1"].append(list(key))
+            g1 = any(e["code"] == "G1" for e in events[key])
+            excluded["b_failed_g1" if g1 else "b_failed_not_g1"].append(list(key))
 
     # ---------------- quality endpoints ----------------
     both = {k: v for k, v in views.items() if v[0]["ok"] and v[1]["ok"]}
@@ -828,7 +834,7 @@ def score(ledger_path: str) -> dict:
         "run": {"status": status, "stop_reason": summary.get("stop_reason"), "complete": complete,
                 "scheduled_pairs": SCHEDULED_PAIRS, "attempts": len(attempts),
                 "replacements": sum(1 for a in attempts if a.get("kind") == "replacement"),
-                "scored_pairs": len(ss["scored"]), "unresolved": ss["unresolved"],
+                "scored_pairs": len(ss["scored"]), "unresolved": ss["unresolved"], "pending": ss["pending"],
                 "provider_calls": summary.get("provider_calls"),
                 "provider_faults": summary.get("provider_faults"),
                 "provider_fault_calls_by_arm": pf_by_arm,
@@ -952,7 +958,7 @@ def baseline(ledger_path: str) -> dict:
         if caps:
             try:
                 raw = parse_like_app(caps[-1]["text"])
-            except ValueError:
+            except Exception:  # as in arm_view
                 violations = [("UNPARSEABLE", "/")]
             else:
                 violations = schema_violations(raw, SCHEMA_A)
@@ -1001,7 +1007,8 @@ def baseline(ledger_path: str) -> dict:
 # entry point
 # ------------------------------------------------------------------ #
 def _write_json(path: str, obj) -> str:
-    data = (json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str) + "\n").encode("utf-8")
+    # ASCII-escaped: model-chosen keys can reach the summary, and a lone surrogate must not stop the write
+    data = (json.dumps(obj, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str) + "\n").encode("ascii")
     with open(path, "xb") as fh:
         fh.write(data)
     return hashlib.sha256(data).hexdigest()
@@ -1013,7 +1020,7 @@ def main(argv=None) -> int:
         result = score(argv[1])
         rows = result.pop("_pair_rows")
         summary_sha = _write_json(argv[2] + "_summary.json", result)
-        with open(argv[2] + "_pairs.csv", "x", encoding="utf-8", newline="") as fh:
+        with open(argv[2] + "_pairs.csv", "x", encoding="utf-8", errors="backslashreplace", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=PAIR_COLUMNS)
             w.writeheader()
             w.writerows(rows)

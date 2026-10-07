@@ -93,6 +93,7 @@ This experiment is the first measurement of what the model actually does under t
   - The harness waits 30 s and reruns the whole pair once, in the same order.
   - A second fault leaves the slot UNRESOLVED. It is excluded and reported.
 - **Scored set:** for each slot, the primary attempt if it has no PROVIDER_FAULT, else the replacement if it has none, else UNRESOLVED.
+- **PENDING:** a faulted primary whose replacement never ran, because a stop fired first, is neither scored nor UNRESOLVED. It is reported, and the run counts as incomplete.
 - **Report-only:** PROVIDER_FAULT calls are counted per arm. A fault pattern only on arm B could mean schema-induced server errors that the frozen allowlist counts as faults. That is reported, and the verdict stays as section 12 says.
 
 ## 6. Run stops (checked after every attempt, in this order)
@@ -110,6 +111,8 @@ Hard-fail events are evaluated only for scored pairs in which **arm A succeeded*
 
 - **G1, new B-only IVE failure.** Arm B failed (a call failure that is not a PROVIDER_FAULT, or an output the app would reject) while arm A succeeded.
   - Exception (PROPOSED): an HTTP 402 on arm B is an account state, not arm-B behaviour. S2 stops the run there, and it is not a G1 event.
+  - Arm-B states set by the harness itself (refused by the guard, not run, or not scorable) are not G1 events. The guard or capture stop decides those (section 6).
+  - Asymmetry, kept as the request words it (PROPOSED reading): a transient non-provider failure, for example a read timeout, is G1 and so FAIL when it hits arm B, but it stops the run under S1 and so gives INCONCLUSIVE when it hits arm A. VERIFIED: 0 non-provider failures in 270 earlier Gemini calls on this deployment (H1 Step 0: 27 IVE; Phase A: 81 IVE and 162 composer, 0 replacements; `VOE_LATENCY_H1_STEP0_MEASUREMENT.md`, `VOE_LATENCY_V04_512_PROVIDER_AWARE_RECONFIRMATION.md`). ESTIMATED 95% upper bound: about 1.1% per call.
 - **G2, malformed or schema-invalid B output, or missing required fields.** B's raw output is parsed exactly as the app parses it and checked against schema B.
   - Any `MAX_ITEMS` violation (a cap not honoured) always counts.
   - Any other violation kind counts when arm A's output in the same pair has no violation of that kind: `WRONG_TYPE`, `MISSING_REQUIRED`, `EXTRA_PROPERTY` or `MIN_ITEMS`.
@@ -229,7 +232,8 @@ ESTIMATED false-warning rate if the cap changes nothing: at most about 10% (four
   - relation-only ids per arm;
   - guard-id counts per arm;
   - defect counts per arm.
-- **Run:** replacements, UNRESOLVED slots, PROVIDER_FAULT calls per arm, HTTP 402 attempts.
+- **Run:** replacements, UNRESOLVED and PENDING slots, PROVIDER_FAULT calls per arm, HTTP 402 attempts.
+- **Excluded pairs, by kind:** only A failed; both failed; B failed with a G1 event; B failed without one (an HTTP 402 or a harness state).
 
 Abstract and highlights are report-only by design (PROPOSED). They are composer-facing, but there is no measured noise level for them, and gating on them would add multiplicity.
 
@@ -243,7 +247,7 @@ Abstract and highlights are report-only by design (PROPOSED). They are composer-
 
    Hard-fail pairs seen before the stop are reported.
 2. **FAIL (HARD_GATE):** any scored pair with a G1–G3 event, including an S4 stop.
-3. **INCONCLUSIVE (INCOMPLETE):** not all 81 slots ended scored or UNRESOLVED, or the ledger is damaged.
+3. **INCONCLUSIVE (INCOMPLETE):** not all 81 slots ended scored or UNRESOLVED (a PENDING slot has not ended), or the ledger is damaged.
 4. **FAIL (QUALITY):** any endpoint INFERIOR or DIVERGENT.
 5. **INCONCLUSIVE (NI_NOT_SHOWN):** any endpoint NOT_SHOWN or not evaluable.
 6. **WARNING (UNCERTAINTY):** any of W1–W4.
@@ -279,8 +283,8 @@ PASS is reached only when no hard-fail event occurred, every margin is shown, no
 
 | Item | sha256 or value |
 |---|---|
-| A/B harness `voe_h1_ab_harness.py` | `3e43e1c81bbaad2de487983e5908f1e7db8aca40d1e2f00994d2cb2b2e34385b` |
-| Scorer `h1_ab_score.py` (pinned inside the harness) | `3e4866ec7ebf81bfc9c1283f3267d417a91bb7019d1f3cc9d5b18cf45a40a4e3` |
+| A/B harness `voe_h1_ab_harness.py` | `0ff6752c770729d63f28c3408058b6e712fe0d253723473cf2031ef21aa7acaa` |
+| Scorer `h1_ab_score.py` (pinned inside the harness) | `9a20742112a4299bb9d6c39dc445bf65322dce2da0bafa193155cec6ab46e8c7` |
 | Sizing `h1_ab_sizing.py` (offline; not used by the run) | `15b56584bf7844fea637dc542ba2873fb40d5950e8b2228899482dc0c41efd7a` |
 | Step 0 capture `voe_h1_ive_capture.py` | `4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7` |
 | Frozen E3 tap `voe_e3_paired_replay.py` | `1134c4f646c7c667d5d93c14d14bec07012be94096b7e492d92f25d2486865c7` |
@@ -301,9 +305,9 @@ The four source files equal deployed `e6880e7`: VERIFIED by the H1 Step 0.5 12-f
 
 ## 16. Outputs and run procedure (only after GO)
 
-**Outputs.** All files are new; `H1AB_OUT_DIR` must not exist.
+**Outputs.** All files are new. The harness refuses to start, before any wiring, unless `H1AB_OUT_DIR` names a directory that does not exist yet.
 
-- `h1ab_ledger.jsonl`, written with fsync after every line:
+- `h1ab_ledger.jsonl`, ASCII-escaped JSON (so no model output can stop a write), written with fsync after every line:
   - one `H1AB_META` line, with identity, all start checks, all hashes, both schemas and the plan;
   - one `H1AB_ATTEMPT` line per pair attempt;
   - one `H1AB_SUMMARY` line.
@@ -346,5 +350,6 @@ The four source files equal deployed `e6880e7`: VERIFIED by the H1 Step 0.5 12-f
 4. **Readings of the request:**
    - G1–G3 apply only when A succeeded;
    - an HTTP 402 is never a B failure;
+   - a transient non-provider failure on B is G1 (FAIL), while the same failure on A stops the run (INCONCLUSIVE); none was seen in 270 earlier calls (section 7);
    - the AB/BA alternation follows run order;
    - abstract and highlights are report-only.

@@ -74,7 +74,7 @@ AB_VERSION = "h1-ab-c3r4-v1"
 EXPECTED_CAPTURE_SHA256 = "4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7"
 EXPECTED_CLASSIFIER_SHA256 = "2b63a7e32d5d8dfe888d1eaf49103b566743dd1165319c76103e61ce524eecb6"
 EXPECTED_PA_SHA256 = "7f242c00e8014078bcc16f5abaf640dc0274e2214ac60bbb89043f2ea5b2207c"
-EXPECTED_SCORER_SHA256 = "3e4866ec7ebf81bfc9c1283f3267d417a91bb7019d1f3cc9d5b18cf45a40a4e3"
+EXPECTED_SCORER_SHA256 = "9a20742112a4299bb9d6c39dc445bf65322dce2da0bafa193155cec6ab46e8c7"
 EXPECTED_IVE_SYSTEM_SHA256 = "6b7f7a6b6e66f88c69880ca0a780d367ca6375055050d4e0f3cf9e6ddcc883f6"
 # Deployed e6880e7 == repo (H1 Step 0.5, 12-file comparison).
 EXPECTED_SOURCE_SHA256 = {
@@ -338,8 +338,10 @@ def run_pair(d, index: int, question: str, pass_no: int, kind: str):
         # None when the turn failed after a valid IVE report (stop rule S1 decides that case)
         row["a_parity"] = (core_reports[0] == in_process["A"]) if core_reports else (
             None if turn_exc is not None else False)
-    elif live.get("A") is not None and turn_exc is not None:
-        row["a_parity"] = _classify(d, turn_exc)["class_key"] == _classify(d, live["A"])["class_key"]
+    elif live.get("A") is not None:
+        # the in-process path rejected arm A: the Core must have failed the same way
+        row["a_parity"] = turn_exc is not None and not core_reports and \
+            _classify(d, turn_exc)["class_key"] == _classify(d, live["A"])["class_key"]
     else:
         row["a_parity"] = None
     row["capture_problems"] = problems
@@ -447,7 +449,8 @@ def run_programme(d: Deps, meta: dict, out_dir: str) -> dict:
     ledger = open(os.path.join(out_dir, "h1ab_ledger.jsonl"), "x", encoding="utf-8")
 
     def emit(tag, obj):
-        ledger.write(f"{tag} {json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str)}\n")
+        # ASCII-escaped: a lone surrogate in model output must not stop the write
+        ledger.write(f"{tag} {json.dumps(obj, ensure_ascii=True, sort_keys=True, default=str)}\n")
         ledger.flush()
         os.fsync(ledger.fileno())
 
@@ -627,6 +630,9 @@ def main() -> int:
         prereg_sha = sha256_file(env["H1AB_PREREG_PATH"])
         if prereg_sha != env["H1AB_PREREG_SHA256"]:
             raise H1ABStop(f"prereg sha256 mismatch: {prereg_sha}")
+        out_dir = env.get("H1AB_OUT_DIR")
+        if not out_dir or os.path.exists(out_dir):
+            raise H1ABStop("H1AB_OUT_DIR must name a directory that does not exist yet")
         d, checks = build_deps(env)
         meta = build_meta(d, checks, prereg_sha)
         if not all(checks.values()):
@@ -643,7 +649,7 @@ def main() -> int:
               flush=True)
         return 0
 
-    S = run_programme(d, meta, env["H1AB_OUT_DIR"])
+    S = run_programme(d, meta, out_dir)
     print(f"H1AB_DONE {json.dumps({'status': S['status'], 'scored_pairs': S['scored_pairs'], 'provider_calls': S['provider_calls'], 'hard_fail_pairs': S['hard_fail_pairs']})}",
           flush=True)
     return 0

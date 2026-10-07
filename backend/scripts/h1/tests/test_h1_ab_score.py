@@ -255,6 +255,34 @@ def test_hard_fail_events_are_b_only(s):
     assert s.pair_hard_fail_events(row) == []
     row = attempt(s, 1, 0, a_pl, bad, 1, 1)
     assert s.pair_hard_fail_events(row) == [{"code": "G2", "detail": "EXTRA_PROPERTY /extra"}]
+    # harness states are not arm-B behaviour: the guard or capture stop decides those
+    for status in ("REFUSED", "NOT_RUN", "UNSCORED"):
+        row = attempt(s, 1, 0, a_pl, b_pl, 1, 1, b_status=status)
+        assert s.pair_hard_fail_events(row) == [], status
+
+
+def test_unparseable_output_never_raises(s):
+    nested = "[" * 200_000 + "]" * 200_000          # valid JSON nesting that exhausts the parser's recursion
+    view = s.arm_view({"status": "INVALID_OUTPUT", "text": nested}, s.SCHEMA_B, None)
+    assert view["violations"] == [("UNPARSEABLE", "/")] and view["ok"] is False
+    a_pl = payload(0, 1)
+    row = attempt(s, 1, 0, a_pl, a_pl, 1, 1, b_status="INVALID_OUTPUT", b_text=nested)
+    assert [e["code"] for e in s.pair_hard_fail_events(row)] == ["G1"]
+
+
+def test_baseline_reads_the_step0_ledger(s, tmp_path):
+    pl = payload(0, 1)
+    turns = [{"index": 0, "ive_reports": [contract(pl)], "captures": [{"outcome": "OK", "text": json.dumps(pl)}],
+              "evidence_ids": ["EV-1::c0", "EV-2::c1"], "context_documents": 2},
+             {"index": 1, "ive_reports": [contract(pl)],
+              "captures": [{"outcome": "OK", "text": "[" * 200_000 + "]" * 200_000}],
+              "evidence_ids": ["EV-1::c0"], "context_documents": 1}]
+    path = tmp_path / "step0.jsonl"
+    path.write_text("".join("H1_TURN " + json.dumps(t) + "\n" for t in turns), encoding="utf-8")
+    b = s.baseline(str(path))
+    assert b["reports"] == 2 and [p["schema_violations"] for p in b["per_turn"]] == [[], ["UNPARSEABLE"]]
+    assert b["rates"]["STRAY_CLAIM_ID"]["reports"] == 1        # EV-2 is not among turn 1's rendered evidence
+    assert b["a_over_cap"] == {"concepts_gt3": 1, "relations_gt4": 1}
 
 
 def test_scored_set_rules(s):
@@ -266,7 +294,10 @@ def test_scored_set_rules(s):
             attempt(s, 1, 2, a_pl, b_pl, 1, 1)]
     ss = s.scored_set(atts)
     assert sorted(ss["scored"]) == [(1, 0), (1, 2)] and ss["scored"][(1, 0)]["kind"] == "replacement"
-    assert ss["unresolved"] == [{"pass": 1, "index": 1}] and ss["inconsistent"] == []
+    assert ss["unresolved"] == [{"pass": 1, "index": 1}] and ss["pending"] == [] and ss["inconsistent"] == []
+    # a faulted primary whose replacement never ran (the run stopped first) is pending, not unresolved
+    ss = s.scored_set(atts + [attempt(s, 1, 3, a_pl, b_pl, 1, 1, has_pf=True)])
+    assert ss["pending"] == [{"pass": 1, "index": 3}] and ss["unresolved"] == [{"pass": 1, "index": 1}]
     atts[4]["invalidated"] = True              # flag disagrees with the classification
     assert s.scored_set(atts)["inconsistent"]
 
@@ -404,6 +435,8 @@ def test_http_402_is_inconclusive_never_a_b_failure(s, tmp_path, arm, status):
     assert s.pair_hard_fail_events(atts[-1]) == []
     r = scored(s, tmp_path, atts, status=status)
     assert r["run"]["http_402_attempts"] == 1 and r["hard_fail"]["pairs"] == 0
+    assert r["excluded"]["b_failed_not_g1" if arm == "B" else "only_a_failed"] == [[1, 11]]
+    assert r["excluded"]["b_failed_g1"] == []
     assert r["verdict"] == {"label": "INCONCLUSIVE", "sub_reason": "HTTP_402", "step": 1,
                             "hard_fail_pairs_before_stop": 0}
 
@@ -432,6 +465,10 @@ def test_unresolved_pairs_do_not_make_the_run_incomplete(s, tmp_path):
     r = scored(s, tmp_path, atts)
     assert r["run"]["unresolved"] == [{"pass": 1, "index": 10}] and r["run"]["complete"]
     assert r["run"]["scored_pairs"] == 80 and r["verdict"]["label"] == "PASS"
+    # without its replacement the slot is pending and the run is not complete
+    r = scored(s, tmp_path, atts[:11] + atts[12:])
+    assert r["run"]["pending"] == [{"pass": 1, "index": 10}] and r["run"]["unresolved"] == []
+    assert not r["run"]["complete"] and r["verdict"]["sub_reason"] == "INCOMPLETE"
 
 
 @pytest.mark.parametrize("breakage", ["user", "order", "schema", "thinking", "parity", "taps"])
@@ -465,3 +502,22 @@ def test_main_writes_new_files_only(s, tmp_path):
     with pytest.raises(FileExistsError):
         s.main(["score", ledger, prefix])
     assert s.main(["nonsense"]) == 2
+
+
+def test_model_chosen_text_cannot_stop_the_outputs(s, tmp_path):
+    """A lone UTF-16 surrogate is a valid JSON escape (an emoji cut in half). In a
+    model-chosen key it reaches the G2 detail, the CSV and the summary; every
+    write must still succeed."""
+    atts = full(s)
+    bad = payload(4, 1, concepts=3, relations=4)
+    bad["k\udc00"] = 1
+    atts[4]["arms"]["B"]["text"] = json.dumps(bad)
+    ledger = write_ledger(tmp_path / "l.jsonl", s, atts)
+    prefix = str(tmp_path / "out")
+    assert s.main(["score", ledger, prefix]) == 0
+    raw = open(prefix + "_summary.json", "rb").read()
+    summary = json.loads(raw)
+    assert raw.isascii() and summary["verdict"]["codes"] == {"G2": 1}
+    assert summary["hard_fail"]["events"][0]["events"] == [{"code": "G2", "detail": "EXTRA_PROPERTY /k\udc00"}]
+    rows = list(csv.DictReader(open(prefix + "_pairs.csv", encoding="utf-8")))
+    assert rows[4]["events"] == "G2:EXTRA_PROPERTY /k\\udc00"

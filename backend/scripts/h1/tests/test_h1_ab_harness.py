@@ -377,14 +377,23 @@ def test_main_preflight_only_and_stops(e, monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("H1AB_PREREG_PATH", str(prereg))
     monkeypatch.setenv("H1AB_PREREG_SHA256", _sha(str(prereg)))
     monkeypatch.setenv("H1AB_PREFLIGHT_ONLY", "1")
+    monkeypatch.setenv("H1AB_OUT_DIR", str(tmp_path / "out"))
     assert e.hm.main() == 0
     out = capsys.readouterr().out
     assert out.startswith("H1AB_PREFLIGHT ") and '"provider_calls": 0' in out
     meta = json.loads(out.split(" ", 1)[1])["meta"]
     assert meta["prereg_sha256"] == _sha(str(prereg)) and meta["schema_b"]["properties"]["relations"]["maxItems"] == 4
+    assert not (tmp_path / "out").exists()
     monkeypatch.setenv("H1AB_PREREG_SHA256", "0" * 64)
     assert e.hm.main() == 2 and capsys.readouterr().out.startswith("H1AB_STOP ")
     monkeypatch.setenv("H1AB_PREREG_SHA256", _sha(str(prereg)))
+    # the output directory is checked before any wiring: unset, or already there (an earlier run)
+    for out_dir in ("", str(tmp_path)):
+        monkeypatch.setenv("H1AB_OUT_DIR", out_dir)
+        assert e.hm.main() == 2 and "H1AB_OUT_DIR" in capsys.readouterr().out
+    monkeypatch.delenv("H1AB_OUT_DIR")
+    assert e.hm.main() == 2 and "H1AB_OUT_DIR" in capsys.readouterr().out
+    monkeypatch.setenv("H1AB_OUT_DIR", str(tmp_path / "out"))
     checks["s0_deployment_id"] = False
     assert e.hm.main() == 2 and "s0_deployment_id" in capsys.readouterr().out
     assert e.provider.seen == [] and e.harness.CALLS == []
@@ -529,11 +538,11 @@ def test_a_second_fault_leaves_the_pair_unresolved(e, tmp_path):
     assert r["run"]["unresolved"] == [{"pass": 1, "index": 0}] and r["run"]["complete"]
 
 
-@pytest.mark.parametrize("faults, calls", [
-    ({"A": [0, 1], "B": [0]}, 4),            # A,B fault, then A faults again: 3 in a row
-    ({"B": [0, 2, 4, 6]}, 14),               # 4 faults within 20 calls
+@pytest.mark.parametrize("faults, calls, unresolved, pending", [
+    ({"A": [0, 1], "B": [0]}, 4, [0], []),     # A,B fault, then A faults again: 3 in a row
+    ({"B": [0, 2, 4, 6]}, 14, [], [3]),        # 4 faults within 20 calls; slot 3 never got its replacement
 ])
-def test_provider_health_stops_the_run(e, tmp_path, faults, calls):
+def test_provider_health_stops_the_run(e, tmp_path, faults, calls, unresolved, pending):
     script_ok(e, 90)
     for arm, positions in faults.items():
         for pos in positions:
@@ -541,7 +550,10 @@ def test_provider_health_stops_the_run(e, tmp_path, faults, calls):
     d, checks, _ = wire(e)
     S, _, ledger = run(e, d, checks, tmp_path)
     assert S["status"] == "INCONCLUSIVE_PROVIDER_HEALTH" and S["provider_calls"] == calls
-    assert e.scorer.score(ledger)["verdict"]["sub_reason"] == "PROVIDER_HEALTH"
+    r = e.scorer.score(ledger)
+    assert r["verdict"]["sub_reason"] == "PROVIDER_HEALTH"
+    assert r["run"]["unresolved"] == S["unresolved"] == [{"pass": 1, "index": i} for i in unresolved]
+    assert r["run"]["pending"] == [{"pass": 1, "index": i} for i in pending]
 
 
 def test_read_timeout_is_not_a_provider_fault(e, tmp_path):
@@ -634,6 +646,54 @@ def test_guard_refuses_beyond_the_call_cap(e, tmp_path):
     assert S["status"] == "STOPPED_HARNESS_GUARD" and len(e.provider.seen) == 3
     last = attempts(parsed)[-1]
     assert last["order"] == "BA" and last["arms"]["A"]["status"] == "REFUSED"
+
+
+def test_a_refused_b_call_is_a_guard_stop_not_a_b_failure(e, tmp_path):
+    script_ok(e, 1)
+    d, checks, _ = wire(e)
+    e.cap.MAX_IVE_CALLS = 1                    # slot 0 runs A first; the guard refuses B
+    S, parsed, ledger = run(e, d, checks, tmp_path)
+    att = attempts(parsed)[0]
+    assert S["status"] == "STOPPED_HARNESS_GUARD" and len(e.provider.seen) == 1
+    assert att["arms"]["A"]["status"] == "OK" and att["arms"]["B"]["status"] == "REFUSED"
+    assert att["hard_fail_events"] == [] and S["hard_fail_pairs"] == 0
+    r = e.scorer.score(ledger)
+    assert r["verdict"]["sub_reason"] == "HARNESS_INTEGRITY" and r["excluded"]["b_failed_not_g1"] == [[1, 0]]
+
+
+def test_a_lone_surrogate_in_model_output_is_recorded_and_scored(e, tmp_path):
+    """Valid JSON can carry a lone UTF-16 surrogate escape (an emoji cut in half).
+    The ledger is ASCII-escaped, so it can stop neither the run nor the scorer."""
+    script_ok(e, 81)
+    pl = payload(1, concepts=3, relations=4)
+    pl["abstract"] = "emoji cut \ud83d here"
+    text = json.dumps(pl)
+    assert "\\ud83d" in text and text.isascii()
+    e.provider.script["B"][1] = response(text)
+    d, checks, _ = wire(e)
+    S, parsed, ledger = run(e, d, checks, tmp_path)
+    assert S["status"] == "COMPLETE" and S["scored_pairs"] == 81 and open(ledger, "rb").read().isascii()
+    att = attempts(parsed)[1]
+    assert att["arms"]["B"]["status"] == "OK" and att["arms"]["B"]["report"]["abstract"] == "emoji cut \ud83d here"
+    assert e.scorer.main(["score", ledger, str(tmp_path / "scored")]) == 0
+
+
+def test_arm_a_parity_fails_when_the_in_process_path_rejects_a_core_report(e, tmp_path):
+    script_ok(e, 1)
+    real = e.hm.adapter_equivalent
+
+    def rejecting(outcome, mi, app):
+        if outcome is e.hm.AB["outcomes"].get("A"):
+            return None, e.hm.wrap_like_core(app.ProviderError, "gemini produced invalid output: x", ValueError("x"))
+        return real(outcome, mi, app)
+
+    e.mp.setattr(e.hm, "adapter_equivalent", rejecting)
+    d, checks, _ = wire(e)
+    S, parsed, ledger = run(e, d, checks, tmp_path)
+    att = attempts(parsed)[0]
+    assert att["error"] is None and att["a_parity"] is False         # the Core accepted what the copy rejected
+    assert S["status"] == "STOPPED_HARNESS_CAPTURE" and len(e.provider.seen) == 2
+    assert e.scorer.score(ledger)["verdict"]["sub_reason"] == "HARNESS_INTEGRITY"
 
 
 class _ExtraCallEngine:
