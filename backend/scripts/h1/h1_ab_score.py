@@ -323,10 +323,12 @@ def arm_view(arm, schema: dict, allowed) -> dict:
     ok = status == "OK" and isinstance(report, dict)
     taps = arm.get("tap") or []
     tap = taps[-1] if taps else {}
+    http = (arm.get("error") or {}).get("http_status")
     return {
         "ok": ok,
         "status": status,
         "class_key": (arm.get("classification") or {}).get("class_key"),
+        "http_status": http if http is not None else (tap.get("error") or {}).get("http_status"),
         "violations": violations,
         "raw_counts": {k: (len(raw[k]) if isinstance(raw, dict) and isinstance(raw.get(k), list) else None)
                        for k in ("concepts", "relations")},
@@ -340,7 +342,9 @@ def arm_view(arm, schema: dict, allowed) -> dict:
 def pair_hard_fail_events(row: dict) -> list:
     """Hard-fail events of one scored pair (prereg section 7, G1-G3). B-only by
     construction: a pair whose arm A did not succeed carries no B event (only-A
-    and both-failed pairs are excluded and reported; S1 stops the run)."""
+    and both-failed pairs are excluded and reported; S1 stops the run). An HTTP
+    402 on arm B is an account state, not arm-B behaviour: S2 stops the run
+    there and the verdict is INCONCLUSIVE (HTTP_402), never a G1 event."""
     allowed = (row.get("model_input") or {}).get("allowed_ids")
     arms = row.get("arms") or {}
     a = arm_view(arms.get("A"), SCHEMA_A, allowed)
@@ -348,6 +352,8 @@ def pair_hard_fail_events(row: dict) -> list:
     if not a["ok"]:
         return []
     if not b["ok"]:
+        if b["http_status"] == 402:
+            return []
         return [{"code": "G1", "detail": f"B {b['status']}: {b['class_key']}"}]
     events = []
     a_codes = {code for code, _ in a["violations"]}
@@ -419,6 +425,19 @@ def sign_test(n_plus: int, n_minus: int) -> float:
     return min(1.0, 2.0 * sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n)
 
 
+def gain_at_equal_thinking(points: list) -> float:
+    """Intercept of the least-squares line of the A-B latency difference on the
+    A-B thinking-token difference, over (thinking_diff, latency_diff) points:
+    the latency gain at equal thinking. With no spread in the thinking
+    difference the slope is unidentified and taken as 0 (the mean difference)."""
+    n = len(points)
+    mx = sum(p[0] for p in points) / n
+    my = sum(p[1] for p in points) / n
+    sxx = sum((p[0] - mx) ** 2 for p in points)
+    slope = sum((p[0] - mx) * (p[1] - my) for p in points) / sxx if sxx > 0 else 0.0
+    return my - slope * mx
+
+
 def ni_state(ci, margin: float) -> str:
     lo, hi = ci
     if lo is None:
@@ -467,12 +486,28 @@ def read_ledger(path: str) -> dict:
     return out
 
 
-def expected_order(index: int) -> str:
-    return "AB" if index % 2 == 0 else "BA"
+def expected_order(pass_no: int, index: int) -> str:
+    """Prereg section 4: the 81 scheduled pairs alternate AB, BA, AB, ... in run
+    order (slot = (pass - 1) * 27 + index), so with 27 questions every question
+    meets both orders across the three passes. A replacement keeps its slot's
+    order. The harness takes the order from here."""
+    return "AB" if ((pass_no - 1) * N_QUESTIONS + index) % 2 == 0 else "BA"
+
+
+def _attempt_has_402(att: dict) -> bool:
+    if (att.get("error_detail") or {}).get("http_status") == 402:
+        return True
+    for rec in (att.get("arms") or {}).values():
+        rec = rec or {}
+        if (rec.get("error") or {}).get("http_status") == 402:
+            return True
+        if any((t.get("error") or {}).get("http_status") == 402 for t in rec.get("tap") or []):
+            return True
+    return False
 
 
 def scored_set(attempts: list) -> dict:
-    """Prereg section 6: per scheduled (pass, index) the primary if it has no
+    """Prereg section 5: per scheduled (pass, index) the primary if it has no
     PROVIDER_FAULT, else the replacement if it has none, else UNRESOLVED."""
     by_key: dict = {}
     for att in attempts:
@@ -518,8 +553,9 @@ def integrity(meta: dict, attempts: list, views: dict) -> dict:
     for att in attempts:
         where = f"pass {att.get('pass')} index {att.get('index')} {att.get('kind')}"
         arms = att.get("arms") or {}
-        if att.get("order") is not None and att.get("order") != expected_order(att.get("index", 0)):
-            problems.append(f"{where}: order {att.get('order')} != {expected_order(att.get('index', 0))}")
+        exp = expected_order(att.get("pass") or 1, att.get("index") or 0)
+        if att.get("order") is not None and att.get("order") != exp:
+            problems.append(f"{where}: order {att.get('order')} != {exp}")
         digests = {arm: (rec or {}).get("input") or {} for arm, rec in arms.items()}
         if {"A", "B"} <= set(digests) and all(digests[x] for x in ("A", "B")):
             for part in ("system", "user"):
@@ -653,11 +689,15 @@ def score(ledger_path: str) -> dict:
 
     lat = {k: v for k, v in views.items() if tap_ok(v[0]) and tap_ok(v[1])}
     lat_clusters: dict = {}
+    adj_clusters: dict = {}
     by_order: dict = {"AB": [], "BA": []}
     for (p, i), (a, b) in sorted(lat.items()):
         d = a["tap"]["sdk_latency_ms"] - b["tap"]["sdk_latency_ms"]
         lat_clusters.setdefault(i, []).append(d)
-        by_order[expected_order(i)].append(d)
+        by_order[expected_order(p, i)].append(d)
+        ta, tb = _num(a["tap"].get("thoughts_tokens")), _num(b["tap"].get("thoughts_tokens"))
+        if ta is not None and tb is not None:
+            adj_clusters.setdefault(i, []).append((ta - tb, d))
     med, med_ci = cluster_bootstrap([lat_clusters[i] for i in sorted(lat_clusters)], median)
     if med is None:
         lat_state = "NOT_EVALUABLE"
@@ -682,13 +722,20 @@ def score(ledger_path: str) -> dict:
         return {"mean": est, "ci95": list(ci), "dist": dist(pooled),
                 "changed": ci[0] is not None and (ci[0] > 0 or ci[1] < 0)}
 
+    adj = [adj_clusters[i] for i in sorted(adj_clusters)]
+    adj_est, adj_ci = cluster_bootstrap(adj, gain_at_equal_thinking)
+    pooled_ab = [x for c in lat_clusters.values() for x in c]
     latency = {
         "pairs": len(lat),
         "a_ms": dist(per_arm("sdk_latency_ms", 0)), "b_ms": dist(per_arm("sdk_latency_ms", 1)),
-        "delta_a_minus_b_ms": dist([x for c in lat_clusters.values() for x in c]),
+        "delta_b_minus_a_ms": dist([-x for x in pooled_ab]),
+        "delta_a_minus_b_ms": dist(pooled_ab),
         "median_improvement_ms": med, "median_improvement_ci95": list(med_ci),
         "threshold_ms": LATENCY_MATERIAL_MS, "state": lat_state,
         "by_order_median_ms": {o: median(v) for o, v in by_order.items()},
+        # report-only (prereg 10): the gain left once the B-A thinking-token difference is regressed out
+        "gain_at_equal_thinking_ms": {"label": "REPORT_ONLY", "estimate": adj_est, "ci95": list(adj_ci),
+                                      "pairs": sum(len(c) for c in adj)},
     }
     tokens_rep = {
         "visible": {"a": dist(per_arm("candidates_tokens", 0)), "b": dist(per_arm("candidates_tokens", 1)),
@@ -768,6 +815,12 @@ def score(ledger_path: str) -> dict:
         return round(total, 4)
 
     cost = {"label": "ESTIMATED", "a_usd": arm_cost("A"), "b_usd": arm_cost("B")}
+    # A B-only pattern here can mean schema-induced server errors that the frozen allowlist counts as faults.
+    pf_by_arm = {"A": 0, "B": 0}
+    for att in attempts:
+        for c in (att.get("classification") or {}).get("calls") or []:
+            if c.get("provider_fault") and c.get("who") in pf_by_arm:
+                pf_by_arm[c["who"]] += 1
 
     result = {
         "tool": "h1_ab_score", "scorer_version": SCORER_VERSION, "ledger_sha256": sha256_file(ledger_path),
@@ -778,6 +831,8 @@ def score(ledger_path: str) -> dict:
                 "scored_pairs": len(ss["scored"]), "unresolved": ss["unresolved"],
                 "provider_calls": summary.get("provider_calls"),
                 "provider_faults": summary.get("provider_faults"),
+                "provider_fault_calls_by_arm": pf_by_arm,
+                "http_402_attempts": sum(1 for a in attempts if _attempt_has_402(a)),
                 "bad_lines": led["bad_lines"]},
         "integrity": integ,
         "hard_fail": {"pairs": len(hard_pairs), "by_code": by_code,
@@ -795,10 +850,14 @@ def score(ledger_path: str) -> dict:
 
 
 def decide(r: dict) -> dict:
-    """Prereg section 9: ordered; the first matching step decides."""
+    """Prereg section 12: ordered; the first matching step decides."""
     status = r["run"]["status"]
     if not r["integrity"]["ok"] or status in (ST_GUARD, ST_CAPTURE):
         return {"label": "INCONCLUSIVE", "sub_reason": "HARNESS_INTEGRITY", "step": 1,
+                "hard_fail_pairs_before_stop": r["hard_fail"]["pairs"]}
+    # A 402 on arm A fails the turn, so the frozen F1-before-F2 order reports it under S1.
+    if status == ST_402 or (status == ST_TURN and r["run"]["http_402_attempts"]):
+        return {"label": "INCONCLUSIVE", "sub_reason": "HTTP_402", "step": 1,
                 "hard_fail_pairs_before_stop": r["hard_fail"]["pairs"]}
     if status == ST_HEALTH:
         return {"label": "INCONCLUSIVE", "sub_reason": "PROVIDER_HEALTH", "step": 1,
