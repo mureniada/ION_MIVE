@@ -63,18 +63,20 @@ RESAMPLES = 10_000
 CI_LEVEL = 0.95
 # Non-inferiority margins on B - A for 81 pairs, calibrated against unchanged-vs-unchanged
 # noise of the 215 stored unchanged v0.4 IVE reports (VOE_LATENCY_H1_RULE_CALIBRATION.md;
-# abstract and highlights: VOE_LATENCY_H2_ABSTRACT_HIGHLIGHTS_CALIBRATION.md).
+# abstract and highlights: PC h2_margin_calibration.json 59acf0e8...c24e, 2026-10-07).
 MARGIN_CLAIM_COUNT = 0.45          # claims per report
 MARGIN_EVIDENCE_COVERAGE = 0.05    # share of the turn's admitted evidence ids cited by claims
 MARGIN_CLAIM_CONTENT = 0.04        # cross-arm minus within-A claim-statement similarity
 MARGIN_UNCERTAINTY_COUNT = 0.45    # uncertainty items per report
 MARGIN_UNCERTAINTY_CONTENT = 0.125  # cross-arm minus within-A uncertainty similarity
 MARGIN_CONFIDENCE = 0.02           # overall report confidence, two-sided equivalence
-MARGIN_ABSTRACT_CONTENT = None     # cross-arm minus within-A abstract token Jaccard (set by the calibration)
-MARGIN_HIGHLIGHTS_CONTENT = None   # cross-arm minus within-A highlights similarity (set by the calibration)
+MARGIN_ABSTRACT_CONTENT = 0.035    # cross-arm minus within-A abstract token Jaccard
+MARGIN_HIGHLIGHTS_CONTENT = 0.065  # cross-arm minus within-A highlights similarity
+MARGIN_HIGHLIGHTS_COUNT = 0.30     # highlights per report
 # Latency rule: MATERIAL when mean(A - B) >= the threshold AND the one-sided 95%
-# cluster-bootstrap lower bound of that mean is above 0.
+# cluster-bootstrap lower bound of that mean is above the floor.
 LATENCY_MATERIAL_MS = 2000.0       # operator's materiality threshold for H2 (several seconds)
+LATENCY_LOWER_BOUND_FLOOR_MS = 1000.0  # the gain is at least 1 s with one-sided 95% confidence
 LATENCY_LOWER_BOUND_LEVEL = 0.95   # one-sided: the 5th percentile of the bootstrap means
 WARNING_SIGN_TEST_ALPHA = 0.05
 # Run-time stop S4: this many consecutive scored pairs with a hard-fail event.
@@ -277,6 +279,7 @@ def report_features(report: dict, allowed) -> dict:
         "confidence": report.get("confidence"),
         "abstract": report.get("abstract") if isinstance(report.get("abstract"), str) else "",
         "highlights": highlights,
+        "highlights_count": len(highlights),
         "concepts": len([c for c in report.get("concepts") or [] if isinstance(c, dict)]),
         "relations": len(relations),
         "allowed_known": allowed is not None,
@@ -445,7 +448,7 @@ def content_clusters(features: dict, sim) -> list:
     """Content endpoints: per question, the mean cross-pass A-vs-B similarity minus
     the mean A-vs-A similarity, one value per question (a cluster of one).
     `features` maps (pass, index) to (A features, B features) of pairs where both
-    arms succeeded. The calibration script calls this same function."""
+    arms succeeded."""
     per_q: dict = {}
     for (p, i), (fa, fb) in features.items():
         per_q.setdefault(i, {})[p] = (fa, fb)
@@ -696,6 +699,7 @@ def score(ledger_path: str) -> dict:
     ni("abstract_content", cross_minus_within(CONTENT_SIMILARITY["abstract_content"]), MARGIN_ABSTRACT_CONTENT)
     ni("highlights_content", cross_minus_within(CONTENT_SIMILARITY["highlights_content"]),
        MARGIN_HIGHLIGHTS_CONTENT)
+    ni("highlights_count", clusters_of(delta("highlights_count")), MARGIN_HIGHLIGHTS_COUNT)
 
     # ---------------- uncertainty warnings ----------------
     unc_chars = cluster_bootstrap(clusters_of(delta("uncertainty_chars")), mean)
@@ -736,7 +740,7 @@ def score(ledger_path: str) -> dict:
     mean_gain, (mean_lb, mean_ub) = cluster_bootstrap(lat_cl, mean, level=1.0 - 2.0 * (1.0 - LATENCY_LOWER_BOUND_LEVEL))
     if mean_gain is None:
         lat_state = "NOT_EVALUABLE"
-    elif mean_gain >= LATENCY_MATERIAL_MS and mean_lb > 0:
+    elif mean_gain >= LATENCY_MATERIAL_MS and mean_lb > LATENCY_LOWER_BOUND_FLOOR_MS:
         lat_state = "MATERIAL"
     elif mean_gain >= LATENCY_MATERIAL_MS:
         lat_state = "NOT_SHOWN"
@@ -769,7 +773,8 @@ def score(ledger_path: str) -> dict:
         "delta_a_minus_b_ms": dist(pooled_ab),
         "mean_improvement_ms": mean_gain, "mean_improvement_lower_bound_one_sided_95": mean_lb,
         "mean_improvement_ci90": [mean_lb, mean_ub],
-        "threshold_ms": LATENCY_MATERIAL_MS, "rule": "mean(A-B) >= threshold AND one-sided 95% lower bound > 0",
+        "threshold_ms": LATENCY_MATERIAL_MS, "lower_bound_floor_ms": LATENCY_LOWER_BOUND_FLOOR_MS,
+        "rule": "mean(A-B) >= threshold AND one-sided 95% lower bound > floor",
         "state": lat_state,
         "median_improvement_ms": med, "median_improvement_ci95": list(med_ci),
         "hodges_lehmann_improvement_ms": hodges_lehmann(pooled_ab),

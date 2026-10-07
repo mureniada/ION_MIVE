@@ -52,18 +52,7 @@ PA_PATH = os.environ["H1AB_TEST_PA"]
 MODEL = "gemini-2.5-pro"
 REAL_CLIENT = genai.Client
 QUESTIONS = [f"Question {i}: what does The Works say about ION?" for i in range(27)]
-STAND_IN_CONTENT_MARGIN = 0.05          # only while the frozen abstract/highlights margins are unset
-
-
-def _raw_scorer_margins_unset():
-    spec = importlib.util.spec_from_file_location(f"h2abs_raw_{uuid.uuid4().hex[:8]}", SCORER_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.MARGIN_ABSTRACT_CONTENT is None or mod.MARGIN_HIGHLIGHTS_CONTENT is None
-
-
-# Identity checks this checkout cannot pass (older VOE bundle, synthetic questions); while the
-# scorer file still has unset margins, margins_set fails there too.
+# Identity checks this checkout cannot pass (older VOE bundle, synthetic questions).
 CHECKOUT_FAILS = ["s0_fingerprint_ok", "s0_profile_version", "s0_questions_sha256", "s0_system_instruction_ok"]
 
 
@@ -134,9 +123,6 @@ def e(monkeypatch):
     runner = hm.load_by_path(f"e3c_{tag}", CLASSIFIER_PATH, hm.EXPECTED_CLASSIFIER_SHA256)
     pa = hm.load_by_path(f"e3pa_{tag}", PA_PATH, hm.EXPECTED_PA_SHA256)
     scorer = _load(f"h2abs_{tag}", SCORER_PATH)
-    for margin in ("MARGIN_ABSTRACT_CONTENT", "MARGIN_HIGHLIGHTS_CONTENT"):
-        if getattr(scorer, margin) is None:
-            setattr(scorer, margin, STAND_IN_CONTENT_MARGIN)
     cap.MAX_IVE_CALLS = hm.MAX_IVE_CALLS
     clock = FakeClock()
     monkeypatch.setattr(harness, "time", SimpleNamespace(monotonic=clock.monotonic))  # the tap's SDK clock
@@ -384,8 +370,7 @@ def test_build_deps_wiring_on_repo_code(e, monkeypatch, tmp_path):
            "H2AB_CAPTURE_PATH": CAPTURE_PATH, "H2AB_CLASSIFIER_PATH": CLASSIFIER_PATH, "H2AB_PA_PATH": PA_PATH,
            "H2AB_SCORER_PATH": SCORER_PATH, "RAILWAY_DEPLOYMENT_ID": e.cap.EXPECTED_DEPLOYMENT_ID}
     d, checks = e.hm.build_deps(env)
-    assert sorted(k for k, v in checks.items() if not v) == sorted(
-        CHECKOUT_FAILS + (["margins_set"] if _raw_scorer_margins_unset() else []))
+    assert sorted(k for k, v in checks.items() if not v) == CHECKOUT_FAILS
     assert d.cap.MAX_IVE_CALLS == 324 and d.harness.CALLS == [] and e.provider.seen == [] and e.clients == []
     meta = e.hm.build_meta(d, checks, "p")
     assert meta["schema_b_sha256"] == meta["schema_a_sha256"] == e.scorer.EXPECTED_SCHEMA_A_SHA256
@@ -422,7 +407,7 @@ def test_dry_run_through_main_and_real_wiring_fails_closed_with_zero_calls(e, mo
     stop = json.loads(lines[0].split(" ", 1)[1])
     assert stop["provider_calls"] == 0 and stop["reason"].startswith("start checks failed")
     failed = sorted(json.loads(stop["reason"].split(": ", 1)[1].replace("'", '"')))
-    assert failed == sorted(CHECKOUT_FAILS + (["margins_set"] if _raw_scorer_margins_unset() else []))
+    assert failed == CHECKOUT_FAILS
     assert e.provider.seen == [] and e.clients == [] and not (tmp_path / "out").exists()
 
 

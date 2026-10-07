@@ -22,9 +22,6 @@ import pytest
 
 H2_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCORER_PATH = os.path.join(H2_DIR, "h2_ab_score.py")
-# Stand-in margins for the synthetic verdict tests only, used while the frozen
-# values are unset; test_operator_decision_constants fails until they are set.
-STAND_IN_CONTENT_MARGIN = 0.05
 MODEL = "gemini-2.5-pro"
 
 
@@ -35,9 +32,6 @@ def s():
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
-    for margin in ("MARGIN_ABSTRACT_CONTENT", "MARGIN_HIGHLIGHTS_CONTENT"):
-        if getattr(mod, margin) is None:
-            setattr(mod, margin, STAND_IN_CONTENT_MARGIN)
     return mod
 
 
@@ -212,9 +206,8 @@ def test_order_alternates_in_run_order_and_every_question_meets_both(s):
 
 
 def test_operator_decision_constants():
-    """Operator decision 2026-10-07 21:25Z: budget 1280, 81 pairs / 3 passes, 81-pair margins,
-    mean latency rule at 2.0 s. Reads the module file as written (no stand-in margins), so
-    it fails until the calibrated abstract and highlights margins are set."""
+    """Operator decision 2026-10-07 21:25Z: budget 1280, 81 pairs / 3 passes, the 81-pair margins
+    (abstract and highlights calibrated offline on the 215 stored reports), mean latency rule at 2.0 s."""
     spec = importlib.util.spec_from_file_location(f"h2abs_raw_{uuid.uuid4().hex[:8]}", SCORER_PATH)
     raw = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(raw)
@@ -223,9 +216,10 @@ def test_operator_decision_constants():
     assert (raw.MARGIN_CLAIM_COUNT, raw.MARGIN_EVIDENCE_COVERAGE, raw.MARGIN_CLAIM_CONTENT,
             raw.MARGIN_UNCERTAINTY_COUNT, raw.MARGIN_UNCERTAINTY_CONTENT, raw.MARGIN_CONFIDENCE) == (
         0.45, 0.05, 0.04, 0.45, 0.125, 0.02)
-    for m in (raw.MARGIN_ABSTRACT_CONTENT, raw.MARGIN_HIGHLIGHTS_CONTENT):
-        assert isinstance(m, float) and 0 < m < 1, "abstract/highlights margins not calibrated"
-    assert (raw.LATENCY_MATERIAL_MS, raw.LATENCY_LOWER_BOUND_LEVEL, raw.CI_LEVEL) == (2000.0, 0.95, 0.95)
+    assert (raw.MARGIN_ABSTRACT_CONTENT, raw.MARGIN_HIGHLIGHTS_CONTENT, raw.MARGIN_HIGHLIGHTS_COUNT) == (
+        0.035, 0.065, 0.30)
+    assert (raw.LATENCY_MATERIAL_MS, raw.LATENCY_LOWER_BOUND_FLOOR_MS, raw.LATENCY_LOWER_BOUND_LEVEL,
+            raw.CI_LEVEL) == (2000.0, 1000.0, 0.95, 0.95)
     assert (raw.SEED, raw.RESAMPLES) == (20261006, 10_000)
 
 
@@ -346,13 +340,13 @@ def test_pass_when_quality_holds_and_the_gain_is_material(s, tmp_path):
     assert {k: v["state"] for k, v in r["endpoints"].items()} == {
         "claim_count": "NONINFERIOR", "evidence_coverage": "NONINFERIOR", "claim_content": "NONINFERIOR",
         "uncertainty_count": "NONINFERIOR", "uncertainty_content": "NONINFERIOR", "confidence": "EQUIVALENT",
-        "abstract_content": "NONINFERIOR", "highlights_content": "NONINFERIOR"}
+        "abstract_content": "NONINFERIOR", "highlights_content": "NONINFERIOR", "highlights_count": "NONINFERIOR"}
     assert r["endpoints"]["abstract_content"]["margin"] == s.MARGIN_ABSTRACT_CONTENT
     assert r["endpoints"]["highlights_content"]["margin"] == s.MARGIN_HIGHLIGHTS_CONTENT
     assert not any(w["triggered"] for w in r["uncertainty_warnings"].values())
     assert r["latency"]["state"] == "MATERIAL" and 2800 < r["latency"]["mean_improvement_ms"] < 3200
-    assert r["latency"]["threshold_ms"] == 2000.0
-    assert r["latency"]["mean_improvement_lower_bound_one_sided_95"] > 0
+    assert r["latency"]["threshold_ms"] == 2000.0 and r["latency"]["lower_bound_floor_ms"] == 1000.0
+    assert r["latency"]["mean_improvement_lower_bound_one_sided_95"] > 1000
     assert 2800 < r["latency"]["median_improvement_ms"] < 3200 and r["latency"]["median_improvement_ci95"][0] > 0
     assert 2800 < r["latency"]["hodges_lehmann_improvement_ms"] < 3200
     assert r["verdict"] == {"label": "PASS", "step": 7}
@@ -399,6 +393,14 @@ def test_latency_not_shown_when_questions_disagree(s, tmp_path):
     assert r["verdict"] == {"label": "INCONCLUSIVE", "sub_reason": "LATENCY_NOT_SHOWN", "step": 7}
 
 
+def test_a_bound_between_zero_and_the_floor_is_not_shown(s, tmp_path):
+    # 14 questions 6.5 s faster, 13 questions 2.5 s slower: mean 2.17 s, bound between 0 and 1 s
+    r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (6500 if i < 14 else -2500)))
+    lat = r["latency"]
+    assert lat["mean_improvement_ms"] >= 2000 and 0 < lat["mean_improvement_lower_bound_one_sided_95"] <= 1000
+    assert lat["state"] == "NOT_SHOWN" and r["verdict"]["sub_reason"] == "LATENCY_NOT_SHOWN"
+
+
 def test_latency_rule_uses_the_mean_not_the_median(s, tmp_path):
     # 15 questions 3 s faster, 12 questions 1 s slower: median 3 s but mean 1.22 s
     r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (3000 if i < 15 else -1000)))
@@ -410,17 +412,17 @@ def test_latency_rule_uses_the_mean_not_the_median(s, tmp_path):
 def test_latency_lower_bound_is_one_sided_95(s, tmp_path):
     """The rule's bound is the 5th percentile of the bootstrap means (one-sided 95%),
     not the 2.5th. Shift-equivariance places a constant offset so that the
-    one-sided bound is above 0 while the two-sided 95% lower limit is not."""
+    one-sided bound is above the 1 s floor while the two-sided 95% lower limit is not."""
     base = [9000.0 if i < 14 else -5500.0 for i in range(27)]
     clusters = [[g] * s.PASSES for g in base]
     _, (q05, _) = s.cluster_bootstrap(clusters, s.mean, level=0.90)
     _, (q025, _) = s.cluster_bootstrap(clusters, s.mean)
     assert q025 < q05
-    shift = -(q025 + q05) / 2.0
+    shift = 1000.0 - (q025 + q05) / 2.0
     r = scored(s, tmp_path, full(s, lat=lambda i, p, a, rng: a - (base[i] + shift)))
     lat = r["latency"]
     assert lat["mean_improvement_lower_bound_one_sided_95"] == pytest.approx(q05 + shift)
-    assert lat["mean_improvement_lower_bound_one_sided_95"] > 0 > q025 + shift
+    assert lat["mean_improvement_lower_bound_one_sided_95"] > 1000 > q025 + shift
     assert lat["mean_improvement_ms"] >= 2000 and lat["state"] == "MATERIAL" and r["verdict"]["label"] == "PASS"
 
 
@@ -624,8 +626,23 @@ def test_dropped_highlights_fail_quality(s, tmp_path):
 
     r = scored(s, tmp_path, full(s, b_payload=b_payload))
     assert r["endpoints"]["highlights_content"]["state"] == "INFERIOR"
+    assert r["endpoints"]["highlights_count"]["state"] == "INFERIOR"
     assert r["report_only"]["highlights"]["count_b"]["median"] == 1
-    assert r["verdict"]["sub_reason"] == "QUALITY" and r["verdict"]["endpoints"] == ["highlights_content"]
+    assert r["verdict"]["sub_reason"] == "QUALITY"
+    assert r["verdict"]["endpoints"] == ["highlights_content", "highlights_count"]
+
+
+def test_one_fewer_highlight_in_half_the_pairs_is_not_shown_or_worse(s, tmp_path):
+    def b_payload(i, p):
+        pl = payload(i, p)
+        if (i + p) % 2:
+            pl["highlights"] = pl["highlights"][:3]
+        return pl
+
+    r = scored(s, tmp_path, full(s, b_payload=b_payload))
+    ep = r["endpoints"]["highlights_count"]
+    assert ep["estimate"] == pytest.approx(-41 / 81) and ep["state"] in ("INFERIOR", "NOT_SHOWN")
+    assert r["verdict"]["label"] in ("FAIL", "INCONCLUSIVE")
 
 
 def test_content_endpoint_compares_cross_arm_with_within_a(s, tmp_path):

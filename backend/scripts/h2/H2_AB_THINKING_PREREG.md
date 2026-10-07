@@ -93,18 +93,35 @@ All endpoints are B − A over scored pairs where both arms succeeded; the resam
 | Uncertainty count | mean B − A uncertainty items per report | noninferiority | 0.45 items | same |
 | Uncertainty content | as claim content, on uncertainty items | noninferiority | 0.125 | same |
 | Overall confidence | mean B − A report confidence | equivalence | ± 0.02 | same |
-| **Abstract content** | per question: mean cross-arm abstract token Jaccard minus mean within-A | noninferiority | **⟨ABSTRACT_MARGIN⟩** | section 8.1 |
-| **Highlights content** | as claim content, on the highlights | noninferiority | **⟨HIGHLIGHTS_MARGIN⟩** | section 8.1 |
+| **Abstract content** | per question: mean cross-arm abstract token Jaccard minus mean within-A | noninferiority | **0.035** | section 8.1 |
+| **Highlights content** | as claim content, on the highlights | noninferiority | **0.065** | section 8.1 |
+| **Highlights count** | mean B − A highlights per report | noninferiority | **0.30** | section 8.1 |
 
 **States.** Noninferiority: NONINFERIOR when the 95% CI lower bound > −margin; INFERIOR when the upper bound < −margin; otherwise NOT_SHOWN. Equivalence: EQUIVALENT when the CI lies inside ±margin; DIVERGENT when entirely outside; otherwise NOT_SHOWN.
 
 **Similarity** is token Jaccard over casefolded word tokens (abstract), or the symmetric mean best-match token Jaccard over a list (claims, uncertainty, highlights). It is a lexical proxy; no embedding model or LLM judge, because no provider calls are allowed. Subtracting the within-A similarity removes the IVE's own run-to-run rewording.
 
-**Joint false-fail risk (ESTIMATED):** an unchanged system passes all six H1-calibrated endpoints about 75% of the time at 81 pairs; with two more endpoints at about 95% each, about 68–70% if independent. Noise alone gives NOT_SHOWN (INCONCLUSIVE), never FAIL.
+**Joint unchanged pass (ESTIMATED, section 8.1):** an unchanged system passes all nine endpoints 73.2% of the time at 81 pairs, and 68.6% when W1–W4 must also stay clear. Noise alone gives NOT_SHOWN (INCONCLUSIVE) or WARNING, never FAIL.
 
 ### 8.1 Abstract and highlights calibration
 
-⟨CALIBRATION_SECTION⟩
+Offline null simulation, 0 provider calls, on the PC (2026-10-07): the 215 stored unchanged v0.4 IVE reports (8 per question, one question 7); 81 pairs; 2,000 null simulations × 2,000 cluster-bootstrap resamples, seed 20261010; scorer statistics from `h1_ab_score.py` @ 8871f05 (sha256 `9a207421…e8c7`), whose `tokens`, `jaccard`, `smbm` and cluster bootstrap equal those of `h2_ab_score.py`. Each unchanged run draws different stored reports of the same question as A and B. Each margin is the narrowest with at least 95% unchanged pass.
+
+| Endpoint | Margin | Unchanged pass | Next narrower |
+|---|---|---|---|
+| Claim count | 0.45 | 96.0% | |
+| Evidence coverage | 0.05 | 95.8% | |
+| Claim content | 0.04 | 96.2% | |
+| Uncertainty count | 0.45 | 97.8% | |
+| Uncertainty content | 0.125 | 96.2% | |
+| Confidence | ± 0.02 | 97.6% | |
+| Abstract content | **0.035** | 95.6% | 0.03 → 88.9% |
+| Highlights content | **0.065** | 96.9% | 0.06 → 94.5% |
+| Highlights count | **0.30** | 98.0% | 0.275 → 94.9% |
+
+- The six earlier margins are re-confirmed at 81 pairs by the same run.
+- Highlights count is added because a budget that drops highlights could otherwise pass on similarity alone.
+- Files (PC, `runs\voe_h2_calib\`): `h2_margin_calibration.py` sha256 `55e773b5c1c827dde99d4bb52509dd6a7d9a26a8d3e45cb05a8d159e6cad6f74`; `h2_margin_calibration.json` sha256 `59acf0e8f4757356b414d271d70c1090ddc3b9e25c1914ed7d880af75143c24e`.
 
 ## 9. Uncertainty warnings (W1–W4)
 
@@ -115,21 +132,21 @@ Any one makes the verdict WARNING, never PASS, even when every margin holds:
 - **W3, emptied:** B has no uncertainty item where A has some, in more pairs than the reverse, exact two-sided sign test p < 0.05.
 - **W4, flattened:** the 95% CI of the cross-arm minus within-A uncertainty similarity lies entirely below 0.
 
-ESTIMATED false-warning rates for an unchanged system (H1 null simulation on the 215 stored reports): W1 3.2%, W2 4.6%, W3 1.3%, W4 2.6%; any warning 9.7%. A systematic reduction that crosses a margin is a quality FAIL (section 8). This guards the open UNCERTAINTY-CARRY watchpoint.
+ESTIMATED false-warning rates for an unchanged system at 81 pairs (null simulation on the 215 stored reports, section 8.1): W1 3.6%, W2 3.9%, W3 1.5%, W4 2.1%; any warning 8.9%. A systematic reduction that crosses a margin is a quality FAIL (section 8). This guards the open UNCERTAINTY-CARRY watchpoint.
 
 ## 10. Latency and tokens
 
 - **Latency** is the frozen tap's `sdk_latency_ms` per IVE call, over scored pairs where both calls returned OK.
 - **Rule (operator threshold 2.0 s):**
-  - **MATERIAL** when mean(A − B) ≥ **2,000 ms** and the one-sided 95% cluster-bootstrap lower bound of that mean is > 0 (the 5th percentile of 10,000 bootstrap means);
-  - NOT_SHOWN when the mean is ≥ 2,000 ms but the bound is ≤ 0;
+  - **MATERIAL** when mean(A − B) ≥ **2,000 ms** and the one-sided 95% cluster-bootstrap lower bound of that mean is > **1,000 ms** (the 5th percentile of 10,000 bootstrap means). The gain is then at least 1 s with one-sided 95% confidence. This is the stricter of the two drafts (cloud: bound > 0; PC: bound > 1 s); at 81 pairs both have the same detection rates below;
+  - NOT_SHOWN when the mean is ≥ 2,000 ms but the bound is ≤ 1,000 ms;
   - NOT_MATERIAL when the mean is < 2,000 ms (the observed gain did not reach the threshold).
 - **Operating characteristics at 81 pairs (ESTIMATED; pair-mean noise 0.49 s; `h2_thinking_calibration.json`):**
 
   | True gain | P(MATERIAL) |
   |---|---|
   | 0 | about 0% |
-  | 1 s | 2.5% |
+  | 1 s | 2.4% |
   | 2 s | 49% (capped near 50%: 2 s is the threshold) |
   | 3 s | 98% |
   | 4 s | 100% |
@@ -142,7 +159,7 @@ ESTIMATED false-warning rates for an unchanged system (H1 null simulation on the
 - **Thinking adherence:** B thinking-token distribution; number and share of B calls above 1,280; A thinking distribution.
 - **Visible output:** B − A visible tokens (UNKNOWN before data whether less thinking changes visible length).
 - **Claims, evidence, uncertainty, confidence:** per-arm distributions; identical statement sets; same-pair similarities.
-- **Abstract and highlights:** length and count per arm; same-pair similarities.
+- **Abstract and highlights:** length and count per arm; same-pair similarities (the gating forms are in section 8).
 - **Schema:** raw concepts and relations counts per arm; schema-violation pairs per arm; top-level key order per arm.
 - **CG-A1, evaluated offline:** pairs where A, B, or only B would fail; relation-only ids; guard-id counts; defect counts per arm. CG-A1 does not run on these turns (they carry no conversation context), as at H1 Step 0.
 - **Run:** replacements, UNRESOLVED and PENDING slots, PROVIDER_FAULT calls per arm, HTTP 402 attempts; excluded pairs by kind.
@@ -178,9 +195,8 @@ A PASS licenses a staging proposal only. It is not Humanization acceptance and n
 
 | Item | sha256 or value |
 |---|---|
-| A/B harness `voe_h2_ab_harness.py` | `⟨HARNESS_SHA256⟩` |
-| Scorer `h2_ab_score.py` (pinned inside the harness) | `⟨SCORER_SHA256⟩` |
-| Content-margin calibration `h2_content_margin_calibration.py` (offline; not used by the run) | `⟨CALIB_SHA256⟩` |
+| A/B harness `voe_h2_ab_harness.py` | `c25bc7292aa626f84a7d93909a5c890644eaf5c4e5cd0bf3373f0d23b55d8eed` |
+| Scorer `h2_ab_score.py` (pinned inside the harness) | `d3c45403a4684d217a7c999e59aadcd95a6ef84eb714044e302fdf77c98e9027` |
 | Step 0 capture `voe_h1_ive_capture.py` | `4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7` |
 | Frozen E3 tap `voe_e3_paired_replay.py` | `1134c4f646c7c667d5d93c14d14bec07012be94096b7e492d92f25d2486865c7` |
 | Frozen classifier `voe_e3_index17_probe.py` | `2b63a7e32d5d8dfe888d1eaf49103b566743dd1165319c76103e61ce524eecb6` |
@@ -233,11 +249,11 @@ A PASS licenses a staging proposal only. It is not Humanization acceptance and n
 
 1. Arm B is a shallow copy of the deployed IVE backend with only `_thinking_budget = 1280`, sharing arm A's SDK client.
 2. Margins of section 8: the H1-calibrated 81-pair set, and the abstract and highlights margins of section 8.1.
-3. Latency rule of section 10 at 2.0 s.
+3. Latency rule of section 10: mean ≥ 2.0 s and one-sided 95% lower bound > 1.0 s.
 4. IVE call cap 324.
 5. S4 systematic-failure stop after 3 consecutive hard-fail pairs.
 6. G1–G3 apply only when A succeeded; an HTTP 402 is never a B failure; a transient non-provider failure on B is G1, the same on A stops the run (none seen in 270 earlier calls on this deployment).
 7. G2 counts a schema-violation kind only when A has none of that kind in the same pair.
 8. AB/BA alternation follows run order.
-9. Abstract and highlights are gating noninferiority endpoints (they were report-only in H1).
-10. Composer-level checks are outside this experiment.
+9. Abstract content, highlights content and highlights count are gating noninferiority endpoints (they were report-only in H1).
+10. Governance coverage is option (a): CG-A1 evaluated offline plus G3, with no composer calls. Composer-level checks (option (b), +162 composer calls) are outside this experiment.

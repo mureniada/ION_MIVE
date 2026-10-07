@@ -76,7 +76,7 @@ AB_VERSION = "h2-ab-thinking1280-v1"
 EXPECTED_CAPTURE_SHA256 = "4284a5ce8176a5ebf6b712bc2a6896325a5c0aa597cc64b71c039f14b69dbfb7"
 EXPECTED_CLASSIFIER_SHA256 = "2b63a7e32d5d8dfe888d1eaf49103b566743dd1165319c76103e61ce524eecb6"
 EXPECTED_PA_SHA256 = "7f242c00e8014078bcc16f5abaf640dc0274e2214ac60bbb89043f2ea5b2207c"
-EXPECTED_SCORER_SHA256 = "79fc0497751866d20f1e5ce3593c13ef12208a149d821c27c0ab9d47de413dfb"
+EXPECTED_SCORER_SHA256 = "d3c45403a4684d217a7c999e59aadcd95a6ef84eb714044e302fdf77c98e9027"
 EXPECTED_IVE_SYSTEM_SHA256 = "6b7f7a6b6e66f88c69880ca0a780d367ca6375055050d4e0f3cf9e6ddcc883f6"
 # Deployed e6880e7 == repo (H1 Step 0.5, 12-file comparison).
 EXPECTED_SOURCE_SHA256 = {
@@ -570,7 +570,7 @@ def ab_start_checks(d: Deps) -> dict:
         "margins_set": all(isinstance(m, float) and m > 0 for m in (
             scorer.MARGIN_CLAIM_COUNT, scorer.MARGIN_EVIDENCE_COVERAGE, scorer.MARGIN_CLAIM_CONTENT,
             scorer.MARGIN_UNCERTAINTY_COUNT, scorer.MARGIN_UNCERTAINTY_CONTENT, scorer.MARGIN_CONFIDENCE,
-            scorer.MARGIN_ABSTRACT_CONTENT, scorer.MARGIN_HIGHLIGHTS_CONTENT)),
+            scorer.MARGIN_ABSTRACT_CONTENT, scorer.MARGIN_HIGHLIGHTS_CONTENT, scorer.MARGIN_HIGHLIGHTS_COUNT)),
         "order_alternates_and_balances": slots[:1] == ["AB"] and all(x != y for x, y in zip(slots, slots[1:]))
         and all({d.scorer.expected_order(p, i) for p in passes} == {"AB", "BA"} for i in n_q),
         "zero_provider_calls": len(d.harness.CALLS) == 0 and len(d.cap.CAPTURES) == 0,
