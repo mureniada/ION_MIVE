@@ -66,6 +66,20 @@ Readiness is checked per request by `require_ready` in
 `backend/app/config_check.py`, which returns `503 not_ready` on `/ask` and on
 pilot turns.
 
+## Known limits (not changed on this branch)
+
+- FastAPI parses the request body before the handler runs. A body that is
+  not JSON gets `422` before the token check, even when no token is
+  configured. No settings, Core or provider work is reached.
+- With `EXECUTION_PROFILE` unset or unknown, an authenticated `/ask` or pilot
+  turn fails at Core construction (`_get_core()`, outside the readiness
+  `try`). It returns a plain-text `500`, not `503 not_ready`. This
+  behaviour comes from the base commit.
+- `local-embed` installs `sentence-transformers`, which pulls the default
+  CUDA build of PyTorch: several GB of wheels. Builds are slow and the image
+  is large. Memory use with `EMBEDDING_BACKEND=local` was not measured here.
+  A 512 MB instance is unlikely to be enough (estimate).
+
 ## Smoke check after a deploy (operator)
 
 1. `GET /health` returns 200.
