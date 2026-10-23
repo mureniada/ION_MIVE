@@ -29,7 +29,8 @@ def _client():
     from fastapi.testclient import TestClient
 
     import app.main as main
-    return TestClient(main.app)
+    from tests.util import pilot_auth_headers
+    return TestClient(main.app, headers=pilot_auth_headers())
 
 
 def _wire(monkeypatch, *, retrieved=("EV-1", "EV-2", "EV-3"), submitted=("EV-1", "EV-2")):

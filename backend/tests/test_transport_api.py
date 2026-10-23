@@ -17,7 +17,8 @@ def _client():
     from fastapi.testclient import TestClient
 
     import app.main as main
-    return TestClient(main.app)
+    from tests.util import pilot_auth_headers
+    return TestClient(main.app, headers=pilot_auth_headers())
 
 
 def test_health_returns_ok():

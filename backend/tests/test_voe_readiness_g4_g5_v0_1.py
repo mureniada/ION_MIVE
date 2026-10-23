@@ -49,7 +49,8 @@ def client(monkeypatch):
     monkeypatch.setenv("GEMINI_MODEL", "g4g5-test-model")
     monkeypatch.setenv("VECTOR_STORE_URL", "http://127.0.0.1:9")
     monkeypatch.setattr(main, "_STATE", {})
-    return TestClient(main.app, raise_server_exceptions=False)
+    from tests.util import pilot_auth_headers
+    return TestClient(main.app, raise_server_exceptions=False, headers=pilot_auth_headers())
 
 
 def _assert_controlled_not_ready(response):

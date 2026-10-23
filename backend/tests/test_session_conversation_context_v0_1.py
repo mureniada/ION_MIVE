@@ -306,7 +306,8 @@ def test_pilot_turn_returns_422_when_a_context_turn_cites_non_admitted_evidence(
     monkeypatch.setattr(main, "_get_core", lambda: (settings, core))
     monkeypatch.setattr(main, "_get_session_controller", lambda: controller)
     monkeypatch.setattr(main, "require_ready", lambda *a, **k: None)
-    client = TestClient(main.app)
+    from tests.util import pilot_auth_headers
+    client = TestClient(main.app, headers=pilot_auth_headers())
 
     session_id = client.post("/pilot/sessions").json()["session_id"]
     first = client.post(f"/pilot/sessions/{session_id}/turn", json={"question": "What is ION?"})

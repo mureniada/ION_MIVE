@@ -3,15 +3,20 @@
 Thin by design: routes validate input, gate on readiness, then delegate to the
 existing `core.ask()` via `app.api.service`. No orchestration, retrieval, provider,
 MIVE, or renderer logic lives here. Run: `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+
+Render pilot: every route except `/health` requires `Authorization: Bearer
+<ION_PILOT_API_TOKEN>` and refuses all requests when that token is not
+configured (`app.api.auth`). The interactive API documentation routes
+(`/docs`, `/redoc`, `/openapi.json`) are not mounted at all.
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .api import service
+from .api import auth, service
 from .config_check import require_ready
 from .container import build_core, build_session_controller
 from .core.config import Settings, SettingsError
@@ -24,7 +29,14 @@ from .modules.session import (
     UnknownSessionError,
 )
 
-app = FastAPI(title="ION MIVE Transport", version="0.1.0")
+# No docs/redoc/openapi routes: they would publish the API surface without auth.
+app = FastAPI(
+    title="ION MIVE Transport",
+    version="0.1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 # Built once and reused (the local embedding model loads lazily on first use).
 _STATE: dict = {}
@@ -61,6 +73,17 @@ def _get_session_controller():
     return _STATE["session_controller"]
 
 
+def _refuse_unauthenticated(authorization: str | None) -> JSONResponse | None:
+    # Runs before validation, readiness and core construction, so an
+    # unauthenticated caller learns nothing and costs nothing.
+    refused = auth.check_bearer(authorization)
+    if refused is None:
+        return None
+    code, body = refused
+    headers = {"WWW-Authenticate": "Bearer"} if code == 401 else None
+    return JSONResponse(status_code=code, content=body, headers=headers)
+
+
 def _session_summary(session) -> dict:
     return {
         "session_id": session.session_id,
@@ -72,11 +95,17 @@ def _session_summary(session) -> dict:
 
 @app.get("/health")
 def health():
+    # Process liveness only: no settings load, no Core, no provider, vector
+    # store, VOE bundle or token check. Not evidence of readiness to answer.
     return {"status": "ok"}
 
 
 @app.post("/ask")
-async def ask(payload: dict | None = None):
+async def ask(payload: dict | None = None, authorization: str | None = Header(default=None)):
+    refused = _refuse_unauthenticated(authorization)
+    if refused:
+        return refused
+
     payload = payload or {}
     question = payload.get("question")
     top_k = payload.get("top_k")
@@ -110,7 +139,13 @@ async def ask(payload: dict | None = None):
 
 
 @app.get("/ask/stream")
-def ask_stream(question: str, top_k: int | None = None):
+def ask_stream(
+    question: str | None = None, top_k: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    # Query parameters are typed loosely on purpose: FastAPI would otherwise
+    # answer a missing `question` or a non-integer `top_k` with 422 before the
+    # DEBUG gate below runs, revealing the route. They are validated after it.
     # Gate first, on a fresh config read only — before validation, readiness,
     # core construction, or any provider work (docs/15, ADR-003).
     # G4: settings that fail to load mean DEBUG cannot be confirmed true, so
@@ -121,7 +156,17 @@ def ask_stream(question: str, top_k: int | None = None):
         debug = False
     if not debug:
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    # Auth after the DEBUG gate, so a non-debug deployment answers 404 to
+    # everyone and never reveals that the route exists.
+    refused = _refuse_unauthenticated(authorization)
+    if refused:
+        return refused
 
+    if top_k is not None:
+        try:
+            top_k = int(top_k)
+        except ValueError:
+            pass  # left as text, so validate_request rejects it with 400
     invalid = service.validate_request(question, top_k)
     if invalid:
         return JSONResponse(status_code=invalid[0], content=invalid[1])
@@ -150,14 +195,25 @@ def ask_stream(question: str, top_k: int | None = None):
 # API exactly once; none of them reaches Core.ask() directly.
 # --------------------------------------------------------------------------- #
 @app.post("/pilot/sessions")
-def create_pilot_session():
+def create_pilot_session(authorization: str | None = Header(default=None)):
+    refused = _refuse_unauthenticated(authorization)
+    if refused:
+        return refused
+
     controller = _get_session_controller()
     session = controller.create_session()
     return _session_summary(session)
 
 
 @app.post("/pilot/sessions/{session_id}/turn")
-async def run_pilot_turn(session_id: str, payload: dict | None = None):
+async def run_pilot_turn(
+    session_id: str, payload: dict | None = None,
+    authorization: str | None = Header(default=None),
+):
+    refused = _refuse_unauthenticated(authorization)
+    if refused:
+        return refused
+
     payload = payload or {}
     question = payload.get("question")
     top_k = payload.get("top_k")
@@ -215,7 +271,11 @@ async def run_pilot_turn(session_id: str, payload: dict | None = None):
 
 
 @app.post("/pilot/sessions/{session_id}/close")
-def close_pilot_session(session_id: str):
+def close_pilot_session(session_id: str, authorization: str | None = Header(default=None)):
+    refused = _refuse_unauthenticated(authorization)
+    if refused:
+        return refused
+
     controller = _get_session_controller()
     try:
         session = controller.close_session(session_id)
